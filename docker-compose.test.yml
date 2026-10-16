@@ -1,0 +1,18 @@
+# Try Vitals on any Linux box (or your Umbrel over SSH) without the app store:
+#   docker compose -f docker-compose.test.yml up -d --build
+# then open http://<your-umbrel-ip>:7468  (no Umbrel login in front of it — test only!)
+services:
+  web:
+    build: ./app
+    image: ghcr.io/adm32/umbrel-vitals:dev
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    ports:
+      - "7468:3000"
+    volumes:
+      - ./test-data:/data
+      - /:/host:rslave
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      UMBREL_ROOT: /home/umbrel/umbrel

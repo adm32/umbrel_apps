@@ -1,0 +1,2 @@
+id: "adam" # Prefix for every app in this store. Letters and dashes only.
+name: "Adam's Apps" # Shown in umbrelOS as "Adam's Apps App Store".

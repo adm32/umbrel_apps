@@ -1,0 +1,41 @@
+name: Build Vitals image
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from the app manifest
+        id: v
+        run: |
+          version=$(grep -E '^version:' adam-vitals/umbrel-app.yml | sed -E 's/version: *"?([^"]+)"?/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/umbrel-vitals:${{ steps.v.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/umbrel-vitals:latest

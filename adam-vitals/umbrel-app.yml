@@ -1,0 +1,183 @@
+manifestVersion: 1.1
+id: adam-vitals
+storage:
+  dataRoot: data
+category: networking
+name: Vitals
+version: "1.0.0"
+tagline: Temperatures, power, drive health, network speed and a disk cleaner
+icon: https://raw.githubusercontent.com/adm32/umbrel_apps/main/adam-vitals/icon.svg
+description: >-
+  Vitals shows everything umbrelOS doesn't: CPU and drive temperatures, power draw and what it costs you,
+  S.M.A.R.T. health for every drive (including external USB drives), live read/write speeds,
+  internet speed tests, data usage, and an activity monitor that shows which app is using your CPU and memory.
+
+
+  It also includes a disk cleaner for leftovers (old app images, oversized logs, temp files, Mac/Windows junk files),
+  a Network Lab (device scanner, ping, traceroute, DNS, port checker, subnet calculator and a subnetting quiz)
+  and Studio tools for music producers (sample-library scanner, duplicate samples, DAW backup cleanup, tempo and recording calculators).
+
+
+  Add up to eight different Vitals widgets to your home screen.
+
+
+  Note: to read hardware sensors, drive health and every app's activity, Vitals runs with full access to your
+  Umbrel (privileged mode, host process list and the Docker socket). Only install it from a source you trust.
+releaseNotes: ""
+
+developer: Adam
+website: https://github.com/adm32/umbrel_apps
+dependencies: []
+repo: https://github.com/adm32/umbrel_apps
+support: https://github.com/adm32/umbrel_apps/issues
+
+port: 7468
+gallery: []
+path: ""
+
+defaultUsername: ""
+defaultPassword: ""
+
+widgets:
+  - id: "system"
+    type: "four-stats"
+    refresh: "5s"
+    endpoint: "web:3000/widgets/system"
+    link: ""
+    example:
+      type: "four-stats"
+      link: ""
+      items:
+        - title: "CPU"
+          text: "12"
+          subtext: "%"
+        - title: "CPU temp"
+          text: "48"
+          subtext: "°C"
+        - title: "Power"
+          text: "9.8"
+          subtext: "W"
+        - title: "Memory"
+          text: "41"
+          subtext: "%"
+  - id: "custom"
+    type: "four-stats"
+    refresh: "5s"
+    endpoint: "web:3000/widgets/custom"
+    link: ""
+    example:
+      type: "four-stats"
+      link: ""
+      items:
+        - title: "CPU"
+          text: "12"
+          subtext: "%"
+        - title: "CPU temp"
+          text: "48"
+          subtext: "°C"
+        - title: "Power"
+          text: "9.8"
+          subtext: "W"
+        - title: "Download"
+          text: "24.6"
+          subtext: "Mb/s"
+  - id: "network"
+    type: "four-stats"
+    refresh: "5s"
+    endpoint: "web:3000/widgets/network"
+    link: "/#network"
+    example:
+      type: "four-stats"
+      link: ""
+      items:
+        - title: "Download"
+          text: "24.6"
+          subtext: "Mb/s"
+        - title: "Upload"
+          text: "3.1"
+          subtext: "Mb/s"
+        - title: "Data today"
+          text: "8.4"
+          subtext: "GB"
+        - title: "Ping"
+          text: "12"
+          subtext: "ms"
+  - id: "thermals"
+    type: "two-stats-with-guage"
+    refresh: "10s"
+    endpoint: "web:3000/widgets/thermals"
+    link: "/#sensors"
+    example:
+      type: "two-stats-with-guage"
+      link: ""
+      items:
+        - title: "CPU"
+          text: "48"
+          subtext: "°C"
+          progress: 0.48
+        - title: "Hottest drive"
+          text: "39"
+          subtext: "°C"
+          progress: 0.56
+  - id: "power"
+    type: "text-with-progress"
+    refresh: "5s"
+    endpoint: "web:3000/widgets/power"
+    link: "/#sensors"
+    example:
+      type: "text-with-progress"
+      link: ""
+      title: "Power draw"
+      text: "9.8"
+      subtext: " W"
+      progressLabel: "≈ €2.15 per month · CPU 3.8 W"
+      progress: 0.15
+  - id: "drives"
+    type: "list"
+    refresh: "1m"
+    endpoint: "web:3000/widgets/drives"
+    link: "/#storage"
+    example:
+      type: "list"
+      link: ""
+      items:
+        - text: "Samsung SSD 970 EVO Plus 1TB"
+          subtext: "Healthy · 41°C · 63% full"
+        - text: "WD Red Plus 4TB"
+          subtext: "Healthy · 37°C · 55% full"
+  - id: "speedtest"
+    type: "three-stats"
+    refresh: "1m"
+    endpoint: "web:3000/widgets/speedtest"
+    link: "/#network"
+    example:
+      type: "three-stats"
+      link: ""
+      items:
+        - icon: "arrow-down"
+          subtext: "Download"
+          text: "942 Mb/s"
+        - icon: "arrow-up"
+          subtext: "Upload"
+          text: "41 Mb/s"
+        - icon: "activity-heartbeat"
+          subtext: "Ping"
+          text: "11 ms"
+  - id: "apps"
+    type: "list"
+    refresh: "5s"
+    endpoint: "web:3000/widgets/apps"
+    link: "/#activity"
+    example:
+      type: "list"
+      link: ""
+      items:
+        - text: "Bitcoin Node"
+          subtext: "8.2% CPU · 1.4 GB"
+        - text: "Immich"
+          subtext: "3.1% CPU · 1.1 GB"
+        - text: "Jellyfin"
+          subtext: "0.9% CPU · 420 MB"
+
+submitter: Adam
+submission: https://github.com/adm32/umbrel_apps

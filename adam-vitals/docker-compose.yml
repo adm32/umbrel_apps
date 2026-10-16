@@ -1,0 +1,28 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # <app-id>_<service>_1
+      APP_HOST: adam-vitals_web_1
+      APP_PORT: 3000
+
+  web:
+    image: ghcr.io/adm32/umbrel-vitals:1.0.0
+    restart: on-failure
+    stop_grace_period: 10s
+    # Hardware sensors, power counters (RAPL), S.M.A.R.T. and hot-plugged USB drives need privileged mode.
+    privileged: true
+    # Host process list (activity monitor) and host network namespace (nsenter for network tools).
+    pid: host
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+      # Read the host's mounts, logs and /sys; the cleaner removes only what its scan found.
+      - /:/host:rslave
+      # Per-app CPU/memory, Docker image and log cleanup.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      UMBREL_ROOT: ${UMBREL_ROOT}
+      APP_ID: adam-vitals
+      APP_VERSION: "1.0.0"
+      PORT: 3000
