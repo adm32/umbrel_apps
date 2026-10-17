@@ -1,5 +1,5 @@
 import {
-  $, api, appIcon, bar, bytes, bytesHTML, cancelJob, diskRateHTML, empty, esc, healthPill, hoursText, icon, modal,
+  $, api, appIcon, bar, bytes, bytesHTML, cancelJob, diskRate, diskRateHTML, empty, esc, healthPill, hoursText, icon, modal,
   runJob, setHTML, temp, toast,
 } from '../ui.js';
 import { sparkline } from '../chart.js';
@@ -16,7 +16,7 @@ function speedClass(mbps) {
 
 export default async function storage(el, app) {
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Storage</h1><p>Every drive connected to your Umbrel — health, space and speed. External USB drives show up here too.</p></div>
+    <div class="pagehead"><div><h1>Storage</h1><p>Health, space and speed of every drive, including USB.</p></div>
       <div class="actions"><button class="btn" id="st-refresh">${icon('refresh', 16)}Refresh</button><button class="btn primary" id="st-bench">${icon('gauge', 16)}Speed test a drive</button></div></div>
     <div class="glass card pad-l" id="st-summary"><div class="skeleton" style="height:60px"></div></div>
     <div class="section-title">Drives <small id="st-count"></small></div>
@@ -63,35 +63,35 @@ export default async function storage(el, app) {
   function driveCard(d) {
     const sm = d.smart || {};
     const life = sm.lifeLeft;
-    const stat = (k, v, dsc = '') => `<div class="stat cell"><div class="k">${k}</div><div class="v">${v}</div>${dsc ? `<div class="d">${dsc}</div>` : ''}</div>`;
-    const parts = d.partitions.filter((p) => p.size > 64e6).map((p) => {
+    const stat = (k, v) => `<div class="stat cell"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    // only the partitions people care about (no EFI/boot slivers)
+    const parts = d.partitions.filter((p) => p.size > 2e9 && !/^\/boot/.test(p.mountpoint || '')).map((p) => {
       const us = p.usage;
-      const label = p.label || p.mountpoint || p.name;
+      const label = p.label || (p.umbrel ? 'umbrelOS data' : p.mountpoint.split('/').pop() || p.name);
       const f = us ? us.used / us.total : 0;
-      return `<div class="part"><div class="row between"><span class="ellipsis"><b>${esc(label)}</b> <span class="faint">${esc(p.fstype || '')}${p.umbrel ? ' · umbrelOS data' : ''}</span></span>
-        <span class="muted nowrap">${us ? `${bytes(us.used)} / ${bytes(us.total)}` : p.mountpoint ? '' : `${bytes(p.size)} · not mounted`}</span></div>
+      return `<div class="part"><div class="row between"><span class="ellipsis"><b>${esc(label)}</b></span>
+        <span class="muted nowrap">${us ? `${bytes(us.free)} free of ${bytes(us.total)}` : 'not mounted'}</span></div>
         ${us ? bar(f, f > 0.9 ? 'critical' : f > 0.8 ? 'warning' : 'brand', 'thin') : ''}</div>`;
     }).join('');
+    const issue = (sm.issues || [])[0];
     return `<div class="glass drive" data-drive="${esc(d.name)}">
       <div class="head"><div class="iconwell cell">${icon(driveIcon(d.kind), 24)}</div>
         <div class="grow"><div class="title ellipsis">${esc(d.model)}</div>
-          <div class="meta"><span class="pill sm">${esc(TRANSPORT[d.transport] || d.transport)}</span>${esc(d.kind)} · ${bytes(d.size)}${d.system ? ' · <span class="pill sm brand">umbrelOS</span>' : ''}</div></div>
+          <div class="meta">${esc(TRANSPORT[d.transport] || d.transport)} · ${bytes(d.size)}${d.system ? ' · umbrelOS' : ''}</div></div>
         ${healthPill(sm)}</div>
+      ${issue ? `<div class="hint" style="color:var(--warning-text);margin-top:12px">${icon('alert-triangle', 15)}${esc(issue)}</div>` : ''}
       <div class="stats mt">
-        ${stat(icon('temperature', 13) + 'Temp', sm.temp != null ? temp(sm.temp) : '–')}
-        ${stat(icon('clock', 13) + 'Powered on', sm.powerOnHours != null ? hoursText(sm.powerOnHours).split(',')[0] : '–', sm.powerCycles != null ? `${sm.powerCycles} starts` : '')}
-        ${life != null ? stat(icon('heart-rate-monitor', 13) + 'Life left', `${life}<small>%</small>`, sm.written ? `${bytes(sm.written)} written` : '') : stat(icon('cloud-upload', 13) + 'Written', sm.written ? bytes(sm.written) : '–')}
+        ${stat('Temperature', sm.temp != null ? temp(sm.temp) : '–')}
+        ${stat('Age', sm.powerOnHours != null ? hoursText(sm.powerOnHours).split(',')[0] : '–')}
+        ${life != null ? stat('Life left', `${life}<small>%</small>`) : stat('Written', sm.written ? bytes(sm.written) : '–')}
       </div>
-      ${(sm.issues || []).length || (sm.notes || []).length || sm.error ? `<div class="issues">${(sm.issues || []).map((i) => `<div class="hint" style="color:var(--warning)">${icon('alert-triangle', 15)}${esc(i)}</div>`).join('')}${(sm.notes || []).map((i) => `<div class="hint">${icon('info-circle', 15)}${esc(i)}</div>`).join('')}${sm.error ? `<div class="hint">${icon('info-circle', 15)}${esc(sm.error)}</div>` : ''}</div>` : ''}
-      <div class="parts">${parts}</div>
-      <div class="io">
-        <div class="cell stat"><div class="k"><span class="dot" style="background:var(--s1)"></span>Read</div><div class="v" data-r>–</div><div data-sr style="height:30px;margin-top:4px"></div></div>
-        <div class="cell stat"><div class="k"><span class="dot" style="background:var(--s2)"></span>Write</div><div class="v" data-w>–</div><div data-sw style="height:30px;margin-top:4px"></div></div>
-      </div>
-      <div class="row mt" style="gap:8px">
-        <button class="btn sm" data-details="${esc(d.name)}">${icon('stethoscope', 15)}Health details</button>
-        ${data.targets.some((t) => t.drive === d.name) ? `<button class="btn sm" data-benchdrive="${esc(d.name)}">${icon('gauge', 15)}Speed test</button>` : ''}
-        <span class="grow"></span><span class="tiny faint">/dev/${esc(d.name)}</span>
+      ${parts ? `<div class="parts">${parts}</div>` : ''}
+      <div class="ioline"><span><span class="dot" style="background:var(--s1)"></span> <b data-r>–</b> read</span>
+        <span><span class="dot" style="background:var(--s2)"></span> <b data-w>–</b> write</span>
+        <span class="spk" style="position:relative"><span data-sr style="position:absolute;inset:0"></span><span data-sw style="position:absolute;inset:0"></span></span></div>
+      <div class="row mt" style="gap:6px">
+        <button class="btn sm ghost" data-details="${esc(d.name)}">${icon('stethoscope', 15)}Health details</button>
+        ${data.targets.some((t) => t.drive === d.name) ? `<button class="btn sm ghost" data-benchdrive="${esc(d.name)}">${icon('gauge', 15)}Speed test</button>` : ''}
       </div></div>`;
   }
 
@@ -100,8 +100,8 @@ export default async function storage(el, app) {
     if (!card) return;
     const h = d.ioHistory || [];
     const max = Math.max(1, ...h.map((x) => Math.max(x[1], x[2])));
-    sparkline(card.querySelector('[data-sr]'), h.map((x) => x[1]), 'var(--s1)', { max, height: 30 });
-    sparkline(card.querySelector('[data-sw]'), h.map((x) => x[2]), 'var(--s2)', { max, height: 30 });
+    sparkline(card.querySelector('[data-sr]'), h.map((x) => x[1]), 'var(--s1)', { max, height: 26, fill: false });
+    sparkline(card.querySelector('[data-sw]'), h.map((x) => x[2]), 'var(--s2)', { max, height: 26, fill: false });
   }
 
   function renderApps() {
@@ -151,6 +151,7 @@ export default async function storage(el, app) {
     setHTML(m.body, !sm.available ? empty('info-circle', sm.standby ? 'The drive is asleep' : 'No health data', sm.standby ? 'Vitals doesn\'t wake sleeping drives just to check them. It will read them next time they spin up.' : esc(sm.error || 'This drive doesn\'t report S.M.A.R.T. data.')) : `
       <div class="row wrap" style="gap:10px;margin-bottom:16px">${healthPill(sm)}${sm.passed === true ? `<span class="pill">${icon('shield-check', 14)}Self-assessment passed</span>` : ''}</div>
       ${(sm.issues || []).map((i) => `<div class="banner warning">${icon('alert-triangle', 18)}<div>${esc(i)}</div></div>`).join('')}
+      ${(sm.notes || []).map((i) => `<div class="banner info">${icon('info-circle', 18)}<div>${esc(i)}</div></div>`).join('')}
       <div class="grid g2">
         <dl class="kv">${kv('Model', esc(sm.model))}${kv('Serial', esc(sm.serial))}${kv('Firmware', esc(sm.firmware))}${kv('Interface', esc(sm.protocol + (sm.sataVersion ? ` · ${sm.sataVersion}` : '')))}${kv('Spin speed', sm.rpm ? `${sm.rpm} rpm` : null)}</dl>
         <dl class="kv">${kv('Temperature', sm.temp != null ? temp(sm.temp) : null)}${kv('Powered on', hoursText(sm.powerOnHours))}${kv('Power cycles', sm.powerCycles)}${kv('Data written', sm.written ? bytes(sm.written) : null)}${kv('Data read', sm.read ? bytes(sm.read) : null)}${kv('Life left', sm.lifeLeft != null ? `${sm.lifeLeft}%` : null)}</dl>
@@ -221,8 +222,8 @@ export default async function storage(el, app) {
       const card = el.querySelector(`[data-drive="${CSS.escape(d.name)}"]`);
       if (!io || !card) continue;
       total += io.read + io.write;
-      setHTML(card.querySelector('[data-r]'), diskRateHTML(io.read));
-      setHTML(card.querySelector('[data-w]'), diskRateHTML(io.write));
+      setHTML(card.querySelector('[data-r]'), diskRate(io.read));
+      setHTML(card.querySelector('[data-w]'), diskRate(io.write));
       d.ioHistory = [...(d.ioHistory || []), [live.t, io.read, io.write]].slice(-90);
       drawSpark(d);
     }
@@ -231,7 +232,8 @@ export default async function storage(el, app) {
   }
 
   await load();
+  if (app.sub === 'bench') benchModal();
   const timer = setInterval(() => load(), 60000);
-  return { update, destroy() { clearInterval(timer); } };
+  return { update, onRoute(sub) { if (sub === 'bench') benchModal(); }, destroy() { clearInterval(timer); } };
 }
 

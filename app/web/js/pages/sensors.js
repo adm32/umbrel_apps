@@ -1,19 +1,18 @@
-import { $, api, bar, bindSeg, clamp, esc, gauge, icon, money, seg, setHTML, statusColor, temp, tempHTML, tempLevel, tempWord, updateGauge } from '../ui.js';
+import { $, api, bar, bindSeg, clamp, esc, gauge, icon, info, money, seg, setHTML, statusColor, temp, tempHTML, tempLevel, tempWord, updateGauge } from '../ui.js';
 import { TimeChart } from '../chart.js';
 
 export default async function sensors(el, app) {
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Temperature & Power</h1><p>Every heat sensor in your Umbrel, and what it costs to keep it running.</p></div>
+    <div class="pagehead"><div><h1>Temperature & Power</h1><p>Heat sensors and running costs.</p></div>
       <div class="actions">${seg('range', [['1h', '1 hour'], ['24h', '24 hours']], '24h')}</div></div>
 
     <div class="grid g2">
       <div class="glass card pad-l">
-        <div class="cardhead"><div class="cardtitle">${icon('temperature', 17)}CPU temperature</div><span id="se-tpill"></span></div>
+        <div class="cardhead"><div class="cardtitle">${icon('temperature', 17)}CPU temperature ${info('Intel CPUs like the i3-8100T are designed to run up to 100°C. Under 70°C is comfortable; long stretches above 85°C usually mean dust or poor airflow.')}</div><span id="se-tpill"></span></div>
         <div class="row wrap" style="gap:22px">
           ${gauge(0, { id: 'se-g', cls: 'lg', label: 'CPU package', color: 'var(--good)' })}
           <div class="grow" style="min-width:200px"><div id="se-tchart"></div></div>
         </div>
-        <p class="hint" style="margin-top:10px">${icon('info-circle', 15)}<span>Intel CPUs like the i3-8100T are designed to run up to 100°C. Under 70°C is comfortable; long stretches above 85°C usually mean dust or poor airflow.</span></p>
       </div>
       <div class="glass card pad-l">
         <div class="cardhead"><div class="cardtitle">${icon('bolt', 17)}Power draw</div><span id="se-psrc"></span></div>
@@ -32,9 +31,8 @@ export default async function sensors(el, app) {
       </div>
       <div class="col" style="gap:16px">
         <div class="glass card pad-l">
-          <div class="cardhead"><div class="cardtitle">${icon('cpu', 17)}Power breakdown</div></div>
+          <div class="cardhead"><div class="cardtitle">${icon('cpu', 17)}Power breakdown <span id="se-explain-i"></span></div></div>
           <div id="se-zones"></div>
-          <p class="explain" id="se-explain" style="margin:12px 0 0"></p>
         </div>
         <div class="glass card pad-l">
           <div class="cardhead"><div class="cardtitle">${icon('propeller', 17)}Fans</div></div>
@@ -93,14 +91,14 @@ export default async function sensors(el, app) {
     setHTML($('#se-zones', el), Object.keys(z).length ? Object.entries(z).map(([k, v]) => `
       <div class="sensor"><div class="name">${esc(names[k] || k)}</div><div class="val">${v.toFixed(2)} W</div>${bar(v / max, 's3')}</div>`).join('')
       : `<div class="small muted">No per-component readings on this hardware.</div>`);
-    setHTML($('#se-explain', el), p.source === 'plug'
+    setHTML($('#se-explain-i', el), info(p.source === 'plug'
       ? 'Wall power comes from your smart plug, so it includes everything: CPU, drives, fans and power-supply losses.'
       : p.package != null
         ? `The CPU reports its own power use (<b>${p.package.toFixed(1)} W</b>). Drives, RAM, fans and the power brick add roughly <b>${app.settings.power_overhead_w} W</b> on a mini PC — adjust that in Settings, or add a smart plug for exact numbers.`
-        : '');
+        : 'No power sensor on this hardware.'));
 
     setHTML($('#se-fans', el), live.fans?.length ? live.fans.map((f) => `<div class="sensor"><div class="name">${esc(f.label)}</div><div class="val">${f.rpm.toLocaleString()} rpm</div>${bar(clamp(f.rpm / 5000), 's1')}</div>`).join('')
-      : `<div class="small muted">Your mini PC doesn't report fan speeds to Linux. That's normal for most small business PCs.</div>`);
+      : `<div class="small muted">No fan speeds reported — normal for most mini PCs.</div>`);
   }
 
   return { update, destroy() { clearInterval(t); tChart.destroy(); pChart.destroy(); } };

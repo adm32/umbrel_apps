@@ -1,9 +1,9 @@
-import { $, api, appIcon, bar, bindSeg, bytes, esc, icon, seg, setBar, setHTML, shortCpu } from '../ui.js';
+import { $, api, appIcon, bar, bindSeg, bytes, esc, icon, info, seg, setBar, setHTML, shortCpu } from '../ui.js';
 import { TimeChart } from '../chart.js';
 
 export default async function performance(el, app) {
   el.innerHTML = `
-    <div class="pagehead"><div><h1>CPU & Memory</h1><p>How hard your processor is working and where your memory goes.</p></div>
+    <div class="pagehead"><div><h1>CPU & Memory</h1><p>Processor load and where memory goes.</p></div>
       <div class="actions">${seg('range', [['5m', '5 min'], ['1h', '1 hour'], ['24h', '24 hours']], '5m')}</div></div>
 
     <div class="grid g-main">
@@ -16,7 +16,7 @@ export default async function performance(el, app) {
         <div id="pf-cpuchart"></div>
       </div>
       <div class="glass card pad-l">
-        <div class="cardhead"><div class="cardtitle">${icon('gauge', 17)}Load average</div></div>
+        <div class="cardhead"><div class="cardtitle">${icon('gauge', 17)}Load average ${info('Load is how many tasks want the CPU at the same time, averaged over 1, 5 and 15 minutes. If it stays below your number of threads, there\'s room to spare.')}</div></div>
         <div class="stats" id="pf-load"></div>
         <p class="explain" style="margin:14px 0 0" id="pf-loadtext"></p>
         <div class="cardhead" style="margin-top:18px"><div class="cardtitle">${icon('bolt', 17)}Clock speed</div></div>
@@ -30,7 +30,7 @@ export default async function performance(el, app) {
 
     <div class="grid g-main mt2">
       <div class="glass card pad-l">
-        <div class="cardhead"><div class="cardtitle">${icon('stack-2', 17)}Memory</div><span class="small muted" id="pf-memtotal"></span></div>
+        <div class="cardhead"><div class="cardtitle">${icon('stack-2', 17)}Memory ${info('<b>Cached</b> memory holds recently used files to make things faster. Linux gives it back the moment an app needs it, so it isn\'t "used up".')}</div><span class="small muted" id="pf-memtotal"></span></div>
         <div class="row wrap" style="gap:28px;margin-bottom:12px">
           <div><div class="small muted">In use by apps</div><div class="huge" id="pf-memused">–</div></div>
           <div class="grow" style="min-width:220px">
@@ -39,12 +39,11 @@ export default async function performance(el, app) {
           </div>
         </div>
         <div id="pf-memchart"></div>
-        <p class="hint" style="margin-top:12px">${icon('info-circle', 15)}<span><b>Cached</b> memory holds recently used files to make things faster. Linux gives it back the moment an app needs it, so it isn't "used up".</span></p>
       </div>
       <div class="glass card pad-l">
         <div class="cardhead"><div class="cardtitle">${icon('apps', 17)}Memory by app</div><a class="cardlink" href="#activity">All ${icon('chevron-right', 14)}</a></div>
         <div class="list" id="pf-memapps"><div class="skeleton" style="height:200px"></div></div>
-        <div class="cardhead" style="margin-top:16px"><div class="cardtitle">${icon('refresh', 17)}Swap</div></div>
+        <div class="cardhead" style="margin-top:16px"><div class="cardtitle">${icon('refresh', 17)}Swap ${info('Swap is disk space used as overflow memory. A little is normal; lots means you\'re short on RAM.')}</div></div>
         <div id="pf-swap" class="small muted"></div>
       </div>
     </div>`;
@@ -86,10 +85,8 @@ export default async function performance(el, app) {
     const n = c.logical || 1;
     setHTML($('#pf-load', el), ['1 min', '5 min', '15 min'].map((l, i) => `<div class="stat cell"><div class="k">${l}</div><div class="v">${c.load[i].toFixed(2)}</div></div>`).join(''));
     const l = c.load[0];
-    setHTML($('#pf-loadtext', el), l < n * 0.7
-      ? `Load is how many tasks want the CPU at once. With <b>${n} threads</b>, anything under ${n} means there's room to spare — you're at <b>${l.toFixed(1)}</b>, so things are relaxed.`
-      : l < n * 1.2 ? `Your ${n} threads are <b>busy</b> (load ${l.toFixed(1)}). Fine for a while, but apps may feel slower.`
-        : `Load <b>${l.toFixed(1)}</b> is above your ${n} threads — tasks are <b>queueing up</b>. Check Activity for the culprit.`);
+    setHTML($('#pf-loadtext', el), l < n * 0.7 ? `Relaxed — plenty of room on ${n} threads.`
+      : l < n * 1.2 ? `Busy — your ${n} threads are mostly in use.` : `Overloaded — tasks are queueing. Check <a href="#activity">Activity</a>.`);
     const fq = c.freq > 200 ? c.freq : null;
     setHTML($('#pf-freq', el), fq ? `${(fq / 1000).toFixed(2)}<small>GHz</small>` : '–');
     setHTML($('#pf-freqmax', el), c.freqMax > 200 ? `Max turbo ${(c.freqMax / 1000).toFixed(2)} GHz — the CPU slows down when idle to save power.` : '');
@@ -115,7 +112,7 @@ export default async function performance(el, app) {
     $('#pf-membar', el).querySelectorAll('i').forEach((i, k) => { i.style.flex = `0 0 ${(100 * segs[k] / m.total).toFixed(2)}%`; });
     setHTML($('#pf-memlegend', el), `<span><i style="background:var(--s4)"></i>Apps ${bytes(m.used)}</span><span><i style="background:var(--s1)"></i>Cached ${bytes(m.cached)}</span><span><i style="background:rgb(var(--ink) / .22)"></i>Free ${bytes(free)}</span>`);
     setHTML($('#pf-swap', el), m.swapTotal
-      ? `${bytes(m.swapUsed)} of ${bytes(m.swapTotal)} used ${bar(m.swapUsed / m.swapTotal, m.swapUsed / m.swapTotal > 0.5 ? 'warning' : 'brand', 'thin')}<div class="tiny faint" style="margin-top:6px">Swap is disk space used as overflow memory. A little is normal; lots means you're short on RAM.</div>`
+      ? `${bytes(m.swapUsed)} of ${bytes(m.swapTotal)} used ${bar(m.swapUsed / m.swapTotal, m.swapUsed / m.swapTotal > 0.5 ? 'warning' : 'brand', 'thin')}`
       : 'No swap configured.');
     if (range === '5m') { cpuChart.set(app.hist); memChart.set(app.hist); }
   }

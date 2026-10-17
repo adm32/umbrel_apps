@@ -874,3 +874,14 @@ details.learn .explain { padding: 0 14px 14px; }
 .drive .ioline .spk { flex: 1; min-width: 60px; height: 26px; }
 .pagetabs { margin: -6px 2px 18px; }
 @media (max-width: 720px) { .hide-sm-text { display: none; } }
+/* keep headers with controls inside narrow screens */
+.cardhead { flex-wrap: wrap; row-gap: 8px; }
+.cardhead > .row, .pagehead .actions { max-width: 100%; }
+.seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: none; }
+@media (max-width: 720px) {
+  .setrow { flex-wrap: wrap; }
+  .setrow .ctl { flex: 1 1 100%; flex-wrap: wrap; }
+  .setrow .ctl .input { flex: 1 1 140px; width: auto !important; max-width: 100% !important; }
+}

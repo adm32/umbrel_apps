@@ -152,7 +152,10 @@ export default async function network(el, app) {
     if (tab === 'speed') {
       const st = net.speedtest || {};
       if (!running) showResult(st.last);
-      charts.hist?.set((st.history || []).map((h) => ({ t: h.at, download: h.download, upload: h.upload })));
+      if (charts.hist) {
+        charts.hist.emptyText.textContent = (st.history || []).length === 1 ? 'Run one more test to see a trend' : 'Run your first test';
+        charts.hist.set((st.history || []).map((h) => ({ t: h.at, download: h.download, upload: h.upload })));
+      }
       setHTML($('#nw-auto', el), app.settings.auto_speedtest_hours ? `Automatic test every ${app.settings.auto_speedtest_hours} h` : '<a href="#settings">Schedule automatic tests</a>');
     }
     if (tab === 'usage') renderUsage();

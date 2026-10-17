@@ -1,4 +1,4 @@
-import { $, api, bar, cancelJob, empty, esc, icon, runJob, setHTML, store, toast } from '../ui.js';
+import { $, ago, api, bar, cancelJob, empty, esc, icon, learn, modal, runJob, setHTML, store, toast } from '../ui.js';
 import { TimeChart } from '../chart.js';
 
 const TABS = [
@@ -52,13 +52,14 @@ function binary(n, prefix) {
   return out;
 }
 
-export default async function netlab(el) {
-  let tab = (location.hash.split('/')[1]) || store.get('netlab-tab', 'devices');
+export default async function netlab(el, app) {
+  const valid = (t) => TABS.some(([id]) => id === t);
+  let tab = valid(app.sub) ? app.sub : store.get('netlab-tab', 'devices');
   let job = null;
 
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Network Lab</h1><p>Real networking tools that run from your Umbrel — great for studying. Each tool shows the command it's based on so you can try it in a terminal too.</p></div></div>
-    <div class="tabs" role="tablist">${TABS.map(([id, l, ic]) => `<button role="tab" data-tab="${id}" class="${id === tab ? 'on' : ''}">${icon(ic, 16)}${l}</button>`).join('')}</div>
+    <div class="pagehead"><div><h1>Network Lab</h1><p>Real network tools, run from your Umbrel.</p></div></div>
+    <div class="tabs strip" role="tablist">${TABS.map(([id, l, ic]) => `<button role="tab" data-tab="${id}" class="${id === tab ? 'on' : ''}">${icon(ic, 16)}${l}</button>`).join('')}</div>
     <div id="nl-body"></div>`;
 
   const body = $('#nl-body', el);
@@ -72,13 +73,14 @@ export default async function netlab(el) {
     tab = t;
     body.onclick = null;
     store.set('netlab-tab', t);
+    history.replaceState(null, '', `#netlab/${t}`);
     el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
     ({ devices, ping, trace, dns, ports, listening, subnet: subnetTab, quiz, lan })[t]();
     window.__vitalsGlass?.(body);
   }
   el.querySelector('.tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) show(b.dataset.tab); });
 
-  const lesson = (html) => `<div class="glass card mt"><div class="cardtitle" style="margin-bottom:8px">${icon('school', 16)}How it works</div><div class="explain">${html}</div></div>`;
+  const lesson = (html) => `<div class="mt">${learn(html)}</div>`;
   const cmd = (c) => `<span class="cmdline">${icon('chevron-right', 13)}${esc(c)}</span>`;
 
   async function runTool(url, payload, onTick) {
@@ -92,25 +94,49 @@ export default async function netlab(el) {
   // ---------------------------------------------------------------- devices
   async function devices() {
     body.innerHTML = `<div class="glass card pad-l">
-        <div class="row wrap between" style="gap:12px"><div><div style="font-weight:640;font-size:16px">Devices on your network</div><div class="small muted" id="dv-sub">Finds everything connected to your home network.</div></div>
-        <button class="btn primary" id="dv-go">${icon('radar-2', 16)}Scan network</button></div>
+        <div class="row wrap between" style="gap:12px"><div><div style="font-weight:640;font-size:16px">Devices on your network</div><div class="small muted" id="dv-sub"></div></div>
+        <div class="row" style="gap:8px"><a class="btn ghost sm" href="#settings/notify" title="Alerts for new devices">${icon('bell', 15)}Alerts</a>
+        <button class="btn primary" id="dv-go">${icon('radar-2', 16)}Scan network</button></div></div>
         <div id="dv-prog"></div><div id="dv-list" class="mt"></div></div>
-      ${lesson('Your Umbrel asks every address in your local range "who has this IP?" using <b>ARP</b> (Address Resolution Protocol). Devices answer with their <b>MAC address</b> — a hardware ID whose first half (the <b>OUI</b>) identifies the manufacturer. That\'s how we can guess "Apple" or "Espressif" without logging into anything. ARP only works inside your own network segment (Layer 2), which is why this can\'t see devices on the internet.')}`;
+      ${lesson('Your Umbrel asks every address in your local range "who has this IP?" using <b>ARP</b>. Devices answer with their <b>MAC address</b> — a hardware ID whose first half (the <b>OUI</b>) names the manufacturer, which is how "Apple" or "Espressif" shows up without logging into anything. ARP only works inside your own network segment (Layer 2). <b>Wake</b> sends a Wake-on-LAN "magic packet": the MAC address repeated 16 times, broadcast to the whole network.')}`;
+    let last = null;
     const render = (r) => {
-      if (!r) { setHTML($('#dv-list', body), empty('radar-2', 'No scan yet', 'Press "Scan network" to discover devices. It takes about 10 seconds.')); return; }
-      setHTML($('#dv-sub', body), `${r.devices.length} devices on ${esc(r.subnet)} · ${cmd('nmap -sn ' + r.subnet)}`);
-      setHTML($('#dv-list', body), `<div class="tablewrap"><table class="t"><thead><tr><th>Device</th><th>IP address</th><th class="hide-sm">MAC address</th><th class="r hide-sm">Latency</th></tr></thead><tbody>
-        ${r.devices.map((d) => `<tr><td><div class="row"><span class="devicon">${icon(devIcon(d), 19)}</span><div class="col" style="gap:0"><b style="font-weight:600">${esc(d.name || d.vendor || 'Unknown device')}</b>
-          <span class="tiny faint">${esc(d.vendor || '')}${d.router ? ' · <span class="pill sm brand">router</span>' : ''}${d.self ? ' · <span class="pill sm good">this Umbrel</span>' : ''}</span></div></div></td>
-          <td class="mono">${esc(d.ip)}</td><td class="mono hide-sm faint">${esc(d.mac || '–')}</td><td class="r hide-sm">${d.latency != null ? `${d.latency} ms` : '–'}</td></tr>`).join('')}</tbody></table></div>`);
+      last = r;
+      if (!r) { setHTML($('#dv-list', body), empty('radar-2', 'No scan yet', 'Press "Scan network" to discover devices. It takes about 10 seconds.')); setHTML($('#dv-sub', body), ''); return; }
+      setHTML($('#dv-sub', body), `${r.devices.length} devices on ${esc(r.subnet)} · scanned ${esc(ago(r.at))}${r.note ? ` · ${esc(r.note)}` : ''}`);
+      setHTML($('#dv-list', body), `<div class="tablewrap"><table class="t"><thead><tr><th>Device</th><th>IP address</th><th class="hide-sm">MAC address</th><th class="r"></th></tr></thead><tbody>
+        ${r.devices.map((d) => `<tr><td><div class="row"><span class="devicon">${icon(devIcon(d), 19)}</span><div class="col" style="gap:0"><b style="font-weight:600">${esc(d.nickname || d.name || d.vendor || 'Unknown device')}${d.new ? ' <span class="pill sm warning">new</span>' : ''}</b>
+          <span class="tiny faint">${esc([d.nickname ? d.name : '', d.vendor].filter(Boolean).join(' · '))}${d.router ? ' · router' : ''}${d.self ? ' · this Umbrel' : ''}</span></div></div></td>
+          <td class="mono">${esc(d.ip)}</td><td class="mono hide-sm faint">${esc(d.mac || '–')}</td>
+          <td class="r nowrap">${d.mac && !d.self ? `<button class="btn ghost sm icon" data-rename="${esc(d.mac)}" title="Rename">${icon('adjustments', 15)}</button><button class="btn ghost sm icon" data-wake="${esc(d.mac)}" title="Wake up (Wake-on-LAN)">${icon('bolt', 15)}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`);
     };
-    render(await api.get('/api/tools/lanscan/last').catch(() => null));
-    $('#dv-go', body).onclick = async (e) => {
-      e.target.closest('button').disabled = true;
-      const j = await runTool('/api/tools/lanscan', {}, (x) => setHTML($('#dv-prog', body), `<div class="small muted mt">${esc(x.phase || 'Scanning…')}</div>${bar(x.progress || 0.05, 'brand', 'thin')}`));
-      setHTML($('#dv-prog', body), '');
-      if (j?.status === 'done') render(j.result);
-      e.target.closest('button').disabled = false;
+    render((await api.get('/api/devices').catch(() => ({}))).last);
+    body.onclick = async (e) => {
+      const go = e.target.closest('#dv-go');
+      if (go) {
+        go.disabled = true;
+        const j = await runTool('/api/tools/lanscan', {}, (x) => setHTML($('#dv-prog', body), `<div class="small muted mt">${esc(x.phase || 'Scanning…')}</div>${bar(x.progress || 0.05, 'brand', 'thin')}`));
+        setHTML($('#dv-prog', body), '');
+        if (j?.status === 'done') { render(j.result); if (j.result.new) toast(`${j.result.new} new device${j.result.new > 1 ? 's' : ''} on your network`, 'info'); }
+        go.disabled = false;
+        return;
+      }
+      const rn = e.target.closest('[data-rename]');
+      if (rn) {
+        const d = last.devices.find((x) => x.mac === rn.dataset.rename);
+        const m = modal({ title: 'Rename device', sub: `${esc(d.vendor || '')} · ${esc(d.ip)} · <span class="mono">${esc(d.mac)}</span>`,
+          body: `<input class="input" id="rn-name" style="width:100%" maxlength="40" placeholder="e.g. Studio Mac" value="${esc(d.nickname || '')}">`,
+          actions: [{ label: 'Cancel', cls: 'ghost' }, { label: 'Save', cls: 'primary', onClick: async () => {
+            const nickname = m.body.querySelector('#rn-name').value;
+            try { await api.put(`/api/devices/${encodeURIComponent(d.mac)}`, { nickname }); d.nickname = nickname.trim(); render(last); } catch (err) { toast(err.message, 'error'); }
+          } }] });
+        m.body.querySelector('#rn-name').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') m.el.querySelector('.foot .btn.primary').click(); });
+        return;
+      }
+      const wk = e.target.closest('[data-wake]');
+      if (wk) {
+        try { toast((await api.post('/api/tools/wol', { mac: wk.dataset.wake })).message, 'good'); } catch (err) { toast(err.message, 'error'); }
+      }
     };
   }
 
@@ -397,8 +423,8 @@ export default async function netlab(el) {
     };
   }
 
-  show(tab in Object.fromEntries(TABS.map((t) => [t[0], 1])) ? tab : 'devices');
-  return { destroy() { if (job && job.status === 'running') cancelJob(job.id); charts.forEach((c) => c.destroy()); } };
+  show(valid(tab) ? tab : 'devices');
+  return { onRoute(sub) { if (valid(sub) && sub !== tab) show(sub); }, destroy() { if (job && job.status === 'running') cancelJob(job.id); charts.forEach((c) => c.destroy()); } };
 }
 
 function devIcon(d) {

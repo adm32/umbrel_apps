@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Vitals
-version: "1.0.0"
+version: "1.1.0"
 tagline: Temperatures, power, drive health, network speed and a disk cleaner
 icon: https://raw.githubusercontent.com/adm32/umbrel_apps/main/adam-vitals/icon.svg
 description: >-
@@ -23,7 +23,23 @@ description: >-
 
   Note: to read hardware sensors, drive health and every app's activity, Vitals runs with full access to your
   Umbrel (privileged mode, host process list and the Docker socket). Only install it from a source you trust.
-releaseNotes: ""
+releaseNotes: >-
+  A calmer design, push notifications, an activity timeline and many fixes.
+
+
+  - Notifications to your phone (ntfy, Discord, Telegram or a webhook) for failing drives, overheating, internet outages, restarts and new devices
+
+  - Activity timeline: internet outages with their duration, restarts, drives plugged in or removed, alerts and cleanups
+
+  - Internet uptime for the last 24 hours and 7 days
+
+  - Network Lab: rename devices, Wake-on-LAN, and alerts when an unknown device joins
+
+  - Search everything with ⌘K / Ctrl K, and export history, speed tests and events as CSV
+
+  - Cleaner, simpler pages: explanations moved behind ⓘ buttons, Network and Studio split into tabs
+
+  - Fixed: the speed test and public IP lookup (Cloudflare changed its API), drive health for NVMe and USB NVMe enclosures, and a one-lost-ping false "offline" alert
 
 developer: Adam
 website: https://github.com/adm32/umbrel_apps

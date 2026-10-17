@@ -83,7 +83,7 @@ class Notifications(unittest.TestCase):
         self.n.process([], now=50000 + notify.RESOLVE_AFTER + 1)
         self.assertNotIn("cpu_temp", self.n.active)
         self.assertEqual(kinds(self.start), ["alert", "resolved"])
-        self.assertIn("Back to normal", self.n.queue[-1]["message"])
+        self.assertEqual(self.n.queue[-1]["message"], "Resolved: CPU is running hot")
 
     def test_min_level_filters_warnings(self):
         settings.update({"notify": {"type": "ntfy", "topic": "t", "min_level": "critical"}})

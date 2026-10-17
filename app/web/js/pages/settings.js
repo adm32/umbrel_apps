@@ -1,4 +1,4 @@
-import { bindSeg, esc, icon, seg, toast } from '../ui.js';
+import { api, bindSeg, esc, icon, info, seg, toast } from '../ui.js';
 import { BUILTIN, umbrelAsset, WALLPAPERS } from '../app.js';
 
 export default async function settings(el, app) {
@@ -10,7 +10,7 @@ export default async function settings(el, app) {
   const tog = (key, on) => `<label class="toggle"><input type="checkbox" data-tog="${key}" ${on ? 'checked' : ''}><span></span></label>`;
 
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Settings</h1><p>Make Vitals yours. Changes save automatically.</p></div></div>
+    <div class="pagehead"><div><h1>Settings</h1><p>Changes save automatically.</p></div></div>
 
     <div class="section-title" style="margin-top:0">Appearance</div>
     <div class="glass card pad-l">
@@ -41,7 +41,25 @@ export default async function settings(el, app) {
       ${row('Data plan resets on day', 'Used for the "this billing cycle" total.', num('net_reset_day', s.net_reset_day, 1, 1, 28, 80))}
       ${row('Latency monitor', 'Pings your router and the internet every 5 seconds so you can spot drop-outs.', tog('latency_enabled', s.latency_enabled))}
       ${row('Internet ping target', 'An address that\'s always up.', `<input class="input" data-text="latency_target" value="${esc(s.latency_target)}" style="width:170px">`)}
+      ${row('Watch for new devices', 'Scans your network in the background and tells you when an unknown device joins.', sel('lan_scan_minutes', [[0, 'Off'], [15, 'Every 15 min'], [30, 'Every 30 min'], [60, 'Every hour'], [180, 'Every 3 hours']], s.lan_scan_minutes))}
       ${row('Automatic speed tests', 'Builds a history so you can see if your provider delivers what you pay for. Each test uses some data.', sel('auto_speedtest_hours', [[0, 'Off'], [1, 'Every hour'], [3, 'Every 3 hours'], [6, 'Every 6 hours'], [12, 'Twice a day'], [24, 'Daily']], s.auto_speedtest_hours))}
+    </div>
+
+    <div class="section-title" id="notify">Notifications</div>
+    <div class="glass card pad-l">
+      ${row('Send alerts to my phone', 'Get a push when a drive is failing, the CPU overheats, the internet drops, the Umbrel restarts or a new device joins.',
+        sel('notify.type', [['none', 'Off'], ['ntfy', 'ntfy (free app)'], ['discord', 'Discord'], ['telegram', 'Telegram'], ['webhook', 'Webhook (advanced)']], s.notify.type))}
+      <div data-ntype="ntfy">${row(`ntfy topic ${info('Install the free <b>ntfy</b> app on your phone, subscribe to a topic name only you know (like <i>umbrel-adam-7x2k</i>), and enter the same name here. Self-hosting ntfy? Put your server address in the second box.')}`, '',
+        `<input class="input" data-text="notify.topic" value="${esc(s.notify.topic)}" placeholder="umbrel-yourname-7x2k" style="width:190px"><input class="input" data-text="notify.url" value="${esc(s.notify.type === 'ntfy' ? s.notify.url : '')}" placeholder="https://ntfy.sh" style="width:150px">`)}</div>
+      <div data-ntype="discord webhook">${row(`Webhook URL ${info('Discord: Server settings → Integrations → Webhooks → New webhook → Copy URL.')}`, '',
+        `<input class="input" data-text="notify.url" value="${esc(['discord', 'webhook'].includes(s.notify.type) ? s.notify.url : '')}" placeholder="https://…" style="width:320px;max-width:60vw">`)}</div>
+      <div data-ntype="telegram">${row(`Telegram ${info('Create a bot with <b>@BotFather</b> to get a token, send your bot a message, then get your chat ID from <b>@userinfobot</b>.')}`, '',
+        `<input class="input" data-text="notify.token" value="${esc(s.notify.type === 'telegram' ? s.notify.token : '')}" placeholder="Bot token" style="width:200px"><input class="input" data-text="notify.chat" value="${esc(s.notify.chat)}" placeholder="Chat ID" style="width:120px">`)}</div>
+      <div data-ntype="ntfy discord telegram webhook">
+        ${row('Which alerts', '', sel('notify.min_level', [['warning', 'Warnings and problems'], ['critical', 'Only serious problems']], s.notify.min_level))}
+        ${row('Tell me when things are fixed', '', tog('notify.resolved', s.notify.resolved))}
+        ${row('Check it works', '', `<button class="btn sm" id="nt-test">${icon('bell', 15)}Send a test</button>`)}
+      </div>
     </div>
 
     <div class="section-title">Alerts</div>
@@ -62,23 +80,45 @@ export default async function settings(el, app) {
       <p class="hint mt">${icon('shield-check', 15)}<span>Your data stays on your Umbrel. The only outside connections are the speed test and public-IP lookup (Cloudflare), and app icons from the Umbrel app gallery.</span></p>
     </div>`;
 
+  const showNotifyFields = (type) => el.querySelectorAll('[data-ntype]').forEach((x) => x.classList.toggle('hide', !x.dataset.ntype.split(' ').includes(type)));
+  showNotifyFields(s.notify.type);
+  el.querySelector('#nt-test').addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    b.disabled = true;
+    try {
+      await new Promise((r) => setTimeout(r, 450));  // let a pending save land first
+      await api.post('/api/notify/test', {});
+      toast('Test sent — check your phone', 'good');
+    } catch (err) { toast(err.message, 'error', 6000); }
+    b.disabled = false;
+  });
+  if (app.sub === 'notify') setTimeout(() => el.querySelector('#notify')?.scrollIntoView({ behavior: 'smooth' }), 100);
+
+  // edits made in quick succession are merged into one save (none get lost)
   let timer;
+  let pending = {};
   const save = (patch, msg = 'Saved') => {
+    for (const [k, v] of Object.entries(patch)) {
+      pending[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...(pending[k] || app.settings[k]), ...v } : v;
+    }
     clearTimeout(timer);
     timer = setTimeout(async () => {
-      try { await app.saveSettings(patch); toast(msg, 'good', 1400); } catch (e) { toast(e.message, 'error'); }
+      const p = pending;
+      pending = {};
+      try { await app.saveSettings(p); toast(msg, 'good', 1400); } catch (e) { toast(e.message, 'error'); }
     }, 350);
   };
   const nested = (key, value) => {
     const [a, b] = key.split('.');
-    return b ? { [a]: { ...app.settings[a], [b]: value } } : { [a]: value };
+    return b ? { [a]: { [b]: value } } : { [a]: value };
   };
 
   for (const key of ['theme', 'accent', 'glass', 'temp_unit']) bindSeg(el, key, (v) => save({ [key]: v }));
   el.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset.num) save(nested(t.dataset.num, +t.value));
-    if (t.dataset.sel) save(nested(t.dataset.sel, t.dataset.sel === 'auto_speedtest_hours' ? +t.value : t.value));
+    if (t.dataset.sel) save(nested(t.dataset.sel, ['auto_speedtest_hours', 'lan_scan_minutes'].includes(t.dataset.sel) ? +t.value : t.value));
+    if (t.dataset.sel === 'notify.type') showNotifyFields(t.value);
     if (t.dataset.text) save(nested(t.dataset.text, t.value.trim()));
     if (t.dataset.tog) save(nested(t.dataset.tog, t.checked));
   });
@@ -97,5 +137,5 @@ export default async function settings(el, app) {
     el.querySelectorAll('[data-wp]').forEach((x) => x.classList.toggle('on', x === b));
     save({ wallpaper: b.dataset.wp }, 'Wallpaper changed');
   });
-  return {};
+  return { onRoute(sub) { if (sub === 'notify') el.querySelector('#notify')?.scrollIntoView({ behavior: 'smooth' }); } };
 }

@@ -49,7 +49,7 @@ export function renderWidget(w) {
 export default async function widgets(el, app) {
   const cw = [...(app.settings.custom_widget || ['cpu', 'cpu_temp', 'power', 'net_down'])];
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Widgets</h1><p>Put Vitals on your umbrelOS home screen. These previews use your live data.</p></div></div>
+    <div class="pagehead"><div><h1>Widgets</h1><p>Add Vitals to your umbrelOS home screen.</p></div></div>
     <div class="glass card pad-l">
       <div class="cardtitle" style="margin-bottom:14px">${icon('layout-grid-add', 17)}How to add a widget</div>
       <div class="steps">

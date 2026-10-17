@@ -28,7 +28,7 @@ from .processes import ProcessMonitor  # noqa: E402
 from .sampler import Sampler  # noqa: E402
 
 log = logging.getLogger("vitals")
-VERSION = os.environ.get("APP_VERSION", "1.0.0")
+VERSION = os.environ.get("APP_VERSION", "1.1.0")
 
 
 class State:

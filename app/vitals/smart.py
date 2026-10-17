@@ -23,8 +23,23 @@ _cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _dev_path(dev: str) -> str:
-    p = config.host_path("/dev/" + dev)  # host /dev sees hot-plugged USB drives
+    """Prefer our own /dev (smartctl recognises the name); fall back to the host's,
+    which also sees USB drives plugged in after Vitals started."""
+    if os.path.exists("/dev/" + dev):
+        return "/dev/" + dev
+    p = config.host_path("/dev/" + dev)
     return p if os.path.exists(p) else "/dev/" + dev
+
+
+def _type_hints(dev: str) -> List[List[str]]:
+    """smartctl guesses the device type from the path; under /host/dev it can't, so say it."""
+    if _dev_path(dev).startswith("/dev/"):
+        return [[]]
+    if dev.startswith("nvme"):
+        return [["-d", "nvme"]]
+    if dev.startswith("sd"):
+        return [["-d", "sat"], ["-d", "scsi"]]
+    return [[]]
 
 
 def available() -> bool:
@@ -32,8 +47,6 @@ def available() -> bool:
 
 
 async def _smartctl(dev: str, extra: Optional[List[str]] = None) -> Dict[str, Any]:
-    if extra is None and dev.startswith("nvme"):
-        extra = ["-d", "nvme"]  # smartctl guesses the type from the path, and /host/dev/... hides it
     cmd = ["smartctl", "-a", "-j", "-n", "standby"] + (extra or []) + [_dev_path(dev)]
     _, out, err = await run(cmd, timeout=40)
     try:
@@ -192,8 +205,11 @@ async def read(dev: str, transport: str, force: bool = False) -> Dict[str, Any]:
     if not available():
         res = {"available": False, "error": "smartctl not installed", "issues": [], "notes": []}
     else:
-        data = await _smartctl(dev)
-        res = parse(data)
+        res = parse({})
+        for hint in _type_hints(dev):
+            res = parse(await _smartctl(dev, hint))
+            if res["available"] or res["standby"]:
+                break
         if not res["available"] and not res["standby"] and transport == "usb":
             # USB enclosures hide the drive behind a bridge chip: try the common ones
             # (SATA via SAT, and the JMicron / ASMedia / Realtek NVMe bridges)

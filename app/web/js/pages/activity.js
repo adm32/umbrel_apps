@@ -13,7 +13,7 @@ export default async function activity(el) {
   let appFilter = '';
 
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Activity</h1><p>What's running on your Umbrel right now, grouped by app. Updates every 2 seconds.</p></div>
+    <div class="pagehead"><div><h1>Activity</h1><p>What's running right now, by app.</p></div>
       <div class="actions">${seg('view', [['apps', 'Apps'], ['procs', 'Processes']], view)}</div></div>
     <div class="glass card" style="margin-bottom:16px"><div class="stats" id="ac-sum"></div></div>
     <div class="glass card pad-l">

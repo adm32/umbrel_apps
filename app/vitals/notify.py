@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -123,7 +124,8 @@ class Notifier:
                 st["gone"] = now
             elif now - st["gone"] >= RESOLVE_AFTER:
                 del self.active[aid]
-                text = f"Back to normal: {st['alert']['text']}"
+                what = re.sub(r"\s*\([^)]*\)\s*$", "", st["alert"]["text"])  # drop the stale reading
+                text = f"Resolved: {what}"
                 events.add("resolved", text, id=aid)
                 if settings.get()["notify"].get("resolved", True):
                     self._enqueue(text, "good", st["alert"], resolved=True)

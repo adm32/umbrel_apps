@@ -7,13 +7,13 @@ const SAFETY = {
   info: ['', 'info-circle', 'Info'],
 };
 
-export default async function cleaner(el) {
+export default async function cleaner(el, app) {
   let scan = null;
   let stats = { freed: 0, runs: 0 };
   const sel = {}; // category id -> Set(item ids)
 
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Cleaner</h1><p>Finds leftovers that pile up on a home server — old app versions, oversized logs, temp files and junk your Mac or PC leaves on shared folders. Nothing is deleted until you say so.</p></div></div>
+    <div class="pagehead"><div><h1>Cleaner</h1><p>Clear out leftovers. Nothing is deleted until you say so.</p></div></div>
     <div id="cl-main"></div>`;
 
   try { ({ scan, stats } = await api.get('/api/cleaner')); } catch { /* fresh */ }
@@ -143,5 +143,6 @@ export default async function cleaner(el) {
   if (scan) for (const c of scan.categories) sel[c.id] = new Set(c.default && !c.infoOnly ? c.items.map((i) => i.id) : []);
   render();
   syncChecks();
-  return {};
+  if (app.sub === 'scan' && !scan) doScan();
+  return { onRoute(sub) { if (sub === 'scan') doScan(); } };
 }

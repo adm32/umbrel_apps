@@ -1,24 +1,48 @@
-import { $, ago, api, bar, bytes, bytesHTML, confirmDialog, empty, esc, icon, runJob, setHTML, store, toast } from '../ui.js';
+import { $, ago, api, bar, bindSeg, bytes, bytesHTML, confirmDialog, empty, esc, icon, info, runJob, seg, setHTML, store, toast } from '../ui.js';
 
 const NOTES = [['1/1', 4], ['1/2', 2], ['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125], ['1/64', 0.0625]];
 const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 
-export default async function studio(el) {
+export default async function studio(el, app) {
   let state = await api.get('/api/studio').catch(() => ({ last: null, drives: [] }));
   let res = state.last;
   let cwd = store.get('studio-path', '');
   const del = new Set();
 
+  let tab = app.sub === 'tools' ? 'tools' : 'library';
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Studio</h1><p>Tools for producers: understand your sample library, reclaim space from duplicate samples and DAW backups, and plan recording sessions.</p></div></div>
-    <div class="grid g-main">
+    <div class="pagehead"><div><h1>Studio</h1><p>Your sample library, plus calculators for sessions.</p></div>
+      <div class="actions">${seg('stab', [['library', 'Library'], ['tools', 'Tools']], tab)}</div></div>
+    <section data-stab="library">
       <div class="glass card pad-l">
-        <div class="cardhead"><div class="cardtitle">${icon('folder-open', 17)}Sample library scanner</div></div>
+        <div class="cardhead"><div class="cardtitle">${icon('folder-open', 17)}Scan a folder ${info('Finds duplicate samples, automatic DAW backup files and your projects, and shows what your library is made of. Nothing is deleted unless you select it.')}</div></div>
         <div class="crumbs" id="sd-crumbs"></div>
         <div class="folderlist cell" id="sd-folders"></div>
         <div class="row wrap mt" style="gap:10px"><button class="btn primary" id="sd-scan">${icon('search', 16)}Scan this folder</button><span class="small muted" id="sd-sel"></span></div>
         <div id="sd-prog"></div>
       </div>
+      <div id="sd-results"></div>
+    </section>
+    <section data-stab="tools">
+      <div class="grid g-main">
+      <div class="glass card pad-l">
+        <div class="cardhead"><div class="cardtitle">${icon('hand-click', 17)}Tempo & delay times</div></div>
+        <div class="row wrap" style="gap:18px;align-items:flex-end">
+          <div class="field" style="width:120px"><label>Tempo (BPM)</label><input class="input" id="tp-bpm" type="number" min="20" max="400" step="0.1" value="${store.get('bpm', 120)}" style="font-size:20px;font-weight:650;height:46px"></div>
+          <div class="grow" style="min-width:200px"><button class="taparea" id="tp-tap">${icon('hand-click', 22)}<div>Tap the beat</div><div class="tiny" style="opacity:.8" id="tp-taps">tap 4+ times · or press T</div></button></div>
+        </div>
+        <div class="tablewrap mt"><table class="t"><thead><tr><th>Note</th><th class="r">Straight</th><th class="r">Dotted</th><th class="r">Triplet</th><th class="r hide-sm">Hz (LFO)</th></tr></thead><tbody id="tp-table"></tbody></table></div>
+        <p class="small muted mt">Reverb that breathes with the track: <b id="tp-rev"></b> ${info('Delay times line up echoes with your groove. For reverb, a <b>pre-delay</b> of a 1/64 note and a <b>decay</b> that ends before the next 1/2 note keeps the mix clear.')}</p>
+      </div>
+      <div class="glass card pad-l">
+        <div class="cardhead"><div class="cardtitle">${icon('wave-sine', 17)}Note ↔ frequency</div>
+          <select class="input" id="nf-a4" style="height:30px;width:auto;font-size:12.5px"><option value="440">A4 = 440 Hz</option><option value="442">A4 = 442 Hz</option><option value="432">A4 = 432 Hz</option></select></div>
+        <div class="field"><label>Frequency (Hz)</label><input class="input" id="nf-hz" type="number" value="${store.get('nf-hz', 110)}" min="8" max="20000"></div>
+        <div id="nf-out" class="mt"></div>
+        <div class="tablewrap mt"><table class="t"><thead><tr><th>Octave</th>${['C', 'E', 'G', 'A'].map((n) => `<th class="r">${n}</th>`).join('')}</tr></thead><tbody id="nf-table"></tbody></table></div>
+      </div>
+      </div>
+      <div class="mt">
       <div class="glass card pad-l">
         <div class="cardhead"><div class="cardtitle">${icon('microphone', 17)}Recording space</div></div>
         <div class="formrow">
@@ -28,26 +52,15 @@ export default async function studio(el) {
         </div>
         <div id="rc-out" class="mt"></div>
       </div>
-    </div>
-    <div id="sd-results"></div>
-    <div class="section-title">Tempo tools</div>
-    <div class="grid g-main">
-      <div class="glass card pad-l">
-        <div class="row wrap" style="gap:18px;align-items:flex-end">
-          <div class="field" style="width:120px"><label>Tempo (BPM)</label><input class="input" id="tp-bpm" type="number" min="20" max="400" step="0.1" value="${store.get('bpm', 120)}" style="font-size:20px;font-weight:650;height:46px"></div>
-          <div class="grow" style="min-width:200px"><button class="taparea" id="tp-tap">${icon('hand-click', 22)}<div>Tap the beat</div><div class="tiny" style="opacity:.8" id="tp-taps">tap 4+ times · or press T</div></button></div>
-        </div>
-        <div class="tablewrap mt"><table class="t"><thead><tr><th>Note</th><th class="r">Straight</th><th class="r">Dotted</th><th class="r">Triplet</th><th class="r hide-sm">Hz (LFO)</th></tr></thead><tbody id="tp-table"></tbody></table></div>
-        <p class="hint mt">${icon('bulb', 15)}<span>Delay times line up echoes with your groove. For reverb, try a <b>pre-delay</b> of a 1/64 note and a <b>decay</b> that ends before the next 1/2 note: <b id="tp-rev"></b>.</span></p>
       </div>
-      <div class="glass card pad-l">
-        <div class="cardhead"><div class="cardtitle">${icon('wave-sine', 17)}Note ↔ frequency</div>
-          <select class="input" id="nf-a4" style="height:30px;width:auto;font-size:12.5px"><option value="440">A4 = 440 Hz</option><option value="442">A4 = 442 Hz</option><option value="432">A4 = 432 Hz</option></select></div>
-        <div class="field"><label>Frequency (Hz) — e.g. a resonance you want to EQ out</label><input class="input" id="nf-hz" type="number" value="${store.get('nf-hz', 110)}" min="8" max="20000"></div>
-        <div id="nf-out" class="mt"></div>
-        <div class="tablewrap mt"><table class="t"><thead><tr><th>Octave</th>${['C', 'E', 'G', 'A'].map((n) => `<th class="r">${n}</th>`).join('')}</tr></thead><tbody id="nf-table"></tbody></table></div>
-      </div>
-    </div>`;
+    </section>`;
+  const showTab = (t) => {
+    tab = t;
+    el.querySelectorAll('section[data-stab]').forEach((x) => x.classList.toggle('hide', x.dataset.stab !== t));
+    history.replaceState(null, '', `#studio/${t}`);
+  };
+  bindSeg(el, 'stab', showTab);
+  showTab(tab);
 
   // ---------------------------------------------------------------- folder browser
   async function browse(path) {
@@ -148,7 +161,7 @@ export default async function studio(el) {
     store.set('bpm', bpm);
     const beat = 60000 / bpm;
     const ms = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v.toFixed(v < 100 ? 1 : 0)} ms`;
-    setHTML($('#tp-table', el), NOTES.map(([n, b]) => `<tr><td><b>${n}</b></td><td class="r">${ms(beat * b)}</td><td class="r">${ms(beat * b * 1.5)}</td><td class="r">${ms(beat * b * 2 / 3)}</td><td class="r hide-sm faint">${(1000 / (beat * b)).toFixed(2)} Hz</td></tr>`).join(''));
+    setHTML($('#tp-table', el), NOTES.map(([n, b]) => `<tr class="nowrap"><td><b>${n}</b></td><td class="r">${ms(beat * b)}</td><td class="r">${ms(beat * b * 1.5)}</td><td class="r">${ms(beat * b * 2 / 3)}</td><td class="r hide-sm faint">${(1000 / (beat * b)).toFixed(2)} Hz</td></tr>`).join(''));
     setHTML($('#tp-rev', el), `pre-delay ${ms(beat / 16)}, decay ${ms(beat * 2 - beat / 16)}`);
   }
 
@@ -234,5 +247,8 @@ export default async function studio(el) {
   tempo();
   noteFreq();
   renderResults();
-  return { destroy() { document.removeEventListener('keydown', onKey); } };
+  return {
+    onRoute(sub) { if (sub === 'tools' || sub === 'library') { el.querySelectorAll('[data-seg="stab"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === sub)); showTab(sub); } },
+    destroy() { document.removeEventListener('keydown', onKey); },
+  };
 }
