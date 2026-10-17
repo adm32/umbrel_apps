@@ -14,7 +14,7 @@ import psutil
 from . import config, settings, smart, storage
 from .network import LatencyMonitor, UsageTracker, read_counters, iface_kind
 from .sensors import Rapl, SmartPlug, cpu_temp, power_summary, read_fans, read_temps
-from .util import load_json, read_text, save_json
+from .util import host_read_text, load_json, read_text, save_json
 
 HISTORY_PATH = config.DATA / "history.json"
 SERIES_KEYS = ("cpu", "mem", "temp", "power", "rx", "tx", "dr", "dw")
@@ -42,7 +42,7 @@ def device_model() -> str:
 
 
 def os_name() -> str:
-    raw = read_text(config.host_path("/etc/os-release")) or ""
+    raw = host_read_text("/etc/os-release") or ""
     for line in raw.splitlines():
         if line.startswith("PRETTY_NAME="):
             return line.split("=", 1)[1].strip('"')
@@ -68,6 +68,10 @@ class Sampler:
         self.drive_names: List[str] = []
         self.drives: List[Dict[str, Any]] = []
         self._drives_at = float("-inf")
+        self._drives_loaded = False
+        from .events import events
+        self.events = events
+        self._check_boot()
         self.snapshot: Dict[str, Any] = {}
         self.session: Optional[aiohttp.ClientSession] = None
         self.static = {
@@ -77,23 +81,59 @@ class Sampler:
             "device": device_model(),
             "os": os_name(),
             "kernel": platform.release(),
-            "hostname": (read_text(config.host_path("/etc/hostname")) or platform.node()).strip(),
+            "hostname": (host_read_text("/etc/hostname") or platform.node()).strip(),
             "arch": platform.machine(),
         }
         psutil.cpu_percent(percpu=True)
         psutil.cpu_times_percent()
 
+    def _check_boot(self) -> None:
+        """Log a timeline event when the Umbrel itself restarted."""
+        path = config.DATA / "boot.json"
+        boot = round(psutil.boot_time())
+        last = load_json(path, {}).get("boot")
+        if last and abs(last - boot) > 120:
+            self.events.add("boot", "Your Umbrel restarted", at=boot)
+        if last != boot:
+            save_json(path, {"boot": boot})
+
     # ------------------------------------------------------------ drives
 
     def refresh_drives(self, force: bool = False) -> List[Dict[str, Any]]:
-        if force or time.monotonic() - self._drives_at > 30:
-            self.drives = storage.list_drives()
-            self.drive_names = [d["name"] for d in self.drives]
-            self._drives_at = time.monotonic()
+        """Cached drive list; update_drives() keeps it fresh without blocking."""
         return self.drives
 
+    async def update_drives(self, force: bool = False) -> List[Dict[str, Any]]:
+        if not force and time.monotonic() - self._drives_at < 30:
+            return self.drives
+        self._drives_at = time.monotonic()
+        loop = asyncio.get_running_loop()
+        try:
+            # statvfs on a drive that's spinning up can take seconds: keep it off the event loop
+            drives = await asyncio.wait_for(loop.run_in_executor(None, storage.list_drives), 30)
+        except (asyncio.TimeoutError, OSError):
+            return self.drives
+        self._diff_drives(drives)
+        self.drives = drives
+        self.drive_names = [d["name"] for d in drives]
+        return drives
+
+    def _diff_drives(self, drives: List[Dict[str, Any]]) -> None:
+        def key(d: Dict[str, Any]) -> str:
+            return f"{d['model']}|{d.get('serial', '')}|{d['size']}"
+        new = {key(d): d for d in drives}
+        if self._drives_loaded:
+            old = {key(d): d for d in self.drives}
+            for k, d in new.items():
+                if k not in old:
+                    self.events.add("drive_added", f"{d['model']} ({_size(d['size'])}) was connected", drive=d["name"])
+            for k, d in old.items():
+                if k not in new:
+                    self.events.add("drive_removed", f"{d['model']} was disconnected", drive=d["name"])
+        self._drives_loaded = True
+
     async def refresh_smart(self, force: bool = False) -> None:
-        for d in self.refresh_drives():
+        for d in await self.update_drives():
             await smart.read(d["name"], d["transport"], force=force)
 
     # ------------------------------------------------------------ one sample
@@ -133,7 +173,7 @@ class Sampler:
         power = power_summary(self.rapl.sample(), self.plug, self.rapl.error)
 
         # disks
-        self.refresh_drives()
+        await self.update_drives()
         disks: Dict[str, Dict[str, float]] = {}
         try:
             raw = psutil.disk_io_counters(perdisk=True) or {}
@@ -241,25 +281,25 @@ class Sampler:
         out = []
         t = snap["cpu"]["temp"]
         if t is not None and t >= a["cpu_temp"]:
-            out.append({"level": "warning", "page": "sensors", "text": f"CPU is running hot ({t:.0f}°C)"})
+            out.append({"id": "cpu_temp", "level": "warning", "page": "sensors", "text": f"CPU is running hot ({t:.0f}°C)"})
         st = snap["storage"]
         if st and st["total"] and 100 * st["used"] / st["total"] >= a["disk_usage"]:
             pct = 100 * st["used"] / st["total"]
-            out.append({"level": "warning", "page": "cleaner", "text": f"Storage is {pct:.0f}% full — the cleaner can help"})
+            out.append({"id": "storage_full", "level": "warning", "page": "cleaner", "text": f"Storage is {pct:.0f}% full — the cleaner can help"})
         for d in self.drives:
             sm = smart.cached(d["name"])
             if not sm:
                 continue
             if sm.get("health") == "critical":
-                out.append({"level": "critical", "page": "storage", "text": f"{d['model']}: {sm['issues'][0] if sm['issues'] else 'health is critical'}"})
+                out.append({"id": f"drive_critical:{d['model']}", "level": "critical", "page": "storage", "text": f"{d['model']}: {sm['issues'][0] if sm['issues'] else 'health is critical'}"})
             elif sm.get("health") == "warning":
-                out.append({"level": "warning", "page": "storage", "text": f"{d['model']}: {sm['issues'][0] if sm['issues'] else 'needs attention'}"})
+                out.append({"id": f"drive_warning:{d['model']}", "level": "warning", "page": "storage", "text": f"{d['model']}: {sm['issues'][0] if sm['issues'] else 'needs attention'}"})
             if sm.get("temp") and sm["temp"] >= a["disk_temp"] and sm.get("health") == "good":
-                out.append({"level": "warning", "page": "storage", "text": f"{d['model']} is hot ({sm['temp']}°C)"})
+                out.append({"id": f"drive_hot:{d['model']}", "level": "warning", "page": "storage", "text": f"{d['model']} is hot ({sm['temp']}°C)"})
         if snap["memory"]["percent"] > 95:
-            out.append({"level": "warning", "page": "activity", "text": "Memory is almost full"})
+            out.append({"id": "memory", "level": "warning", "page": "activity", "text": "Memory is almost full"})
         if snap["online"] is False:
-            out.append({"level": "critical", "page": "network", "text": "Your Umbrel can't reach the internet"})
+            out.append({"id": "offline", "level": "critical", "page": "network", "text": "Your Umbrel can't reach the internet"})
         return out
 
     def save(self) -> None:
@@ -272,3 +312,11 @@ class Sampler:
         if rng == "1h":
             return list(self.long)[-60:]
         return list(self.short)
+
+
+def _size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit in ("B", "KB") or n >= 100 else f"{n:.1f} {unit}"
+        n /= 1000.0
+    return ""

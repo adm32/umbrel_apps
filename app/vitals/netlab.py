@@ -343,7 +343,9 @@ async def lan_scan(job: Job, subnet: Optional[str]) -> Dict[str, Any]:
         if d["self"] and not d.get("vendor"):
             d["vendor"] = "This Umbrel"
     out = sorted(devices.values(), key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
-    return {"subnet": str(n), "devices": out, "at": time.time()}
+    from .devices import devices as registry
+    new = registry.merge(out)
+    return {"subnet": str(n), "devices": out, "at": time.time(), "new": len(new)}
 
 
 # ---------------------------------------------------------------- listening ports

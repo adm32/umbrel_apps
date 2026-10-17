@@ -9,14 +9,14 @@ from typing import Any, Dict, List, Optional
 import psutil
 
 from . import config, docker_api
-from .util import read_text
+from .util import host_read_text, read_text
 
 _CID = re.compile(r"([0-9a-f]{64})")
 
 
 def _host_users() -> Dict[int, str]:
     out = {}
-    raw = read_text(config.host_path("/etc/passwd")) or ""
+    raw = host_read_text("/etc/passwd") or ""
     for line in raw.splitlines():
         f = line.split(":")
         if len(f) > 2 and f[2].isdigit():

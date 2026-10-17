@@ -31,6 +31,29 @@ def read_int(path: str, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def host_resolve(path: str) -> str:
+    """Follow symlinks inside the mounted host filesystem.
+
+    An absolute link like /etc/resolv.conf -> /run/systemd/resolve/stub-resolv.conf
+    must be re-rooted under the host mount, or it would point into the container.
+    """
+    p = config.host_path(path)
+    for _ in range(16):
+        try:
+            target = os.readlink(p)
+        except OSError:
+            return p
+        if target.startswith("/"):
+            p = config.host_path(target)
+        else:
+            p = os.path.normpath(os.path.join(os.path.dirname(p), target))
+    return p
+
+
+def host_read_text(path: str, default: Optional[str] = None) -> Optional[str]:
+    return read_text(host_resolve(path), default)
+
+
 def load_json(path: Path, default: Any) -> Any:
     try:
         with open(path) as f:

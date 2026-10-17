@@ -168,6 +168,7 @@ class Studio:
         audio_bytes = 0
         headers_read = 0
         t0 = time.monotonic()
+        last_tick = 0.0
 
         for dirpath, dirnames, filenames in os.walk(root):
             if job.cancelled:
@@ -214,7 +215,8 @@ class Studio:
                                      "path": display(p), "modified": st.st_mtime, "size": st.st_size})
                 elif (in_backup and ext in (".als", ".flp", ".cpr", ".song")) or low.endswith(BACKUP_HINTS):
                     backups.append((p, st.st_size, "DAW backup"))
-            if files % 2000 == 0:
+            if time.monotonic() - last_tick > 0.5:
+                last_tick = time.monotonic()
                 job.phase = f"Scanned {files:,} files"
                 job.data["files"] = files
 

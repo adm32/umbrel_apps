@@ -234,7 +234,7 @@ class Cleaner:
         installed = set(docker_api.installed_apps())
         if not installed:
             return None
-        conts = await docker_api.get("/containers/json", all="1", size="1")
+        conts = await docker_api.get("/containers/json", all="1")  # size=1 here is very slow on busy hosts
         items = []
         for c in conts:
             labels = c.get("Labels") or {}
@@ -244,7 +244,10 @@ class Cleaner:
             if project in installed or project in ("umbrel",) or project == config.APP_ID:
                 continue
             name = (c.get("Names") or ["/?"])[0].lstrip("/")
-            size = c.get("SizeRw") or 0
+            try:  # measure only the leftovers we found
+                size = (await docker_api.get(f"/containers/{c['Id']}/json", size="1")).get("SizeRw") or 0
+            except Exception:
+                size = 0
             item_id = _uid()
             items.append({"id": item_id, "label": name, "size": size, "detail": f"From '{project}', which isn't installed"})
 
@@ -335,6 +338,7 @@ class Cleaner:
     async def _scan_tmp(self, job: Job) -> Optional[Dict[str, Any]]:
         cutoff = time.time() - 10 * 86400
         roots = [config.host_path("/tmp"), config.host_path("/var/tmp")]
+        in_use = _open_files(config.HOST)  # never delete a file a running program has open
         paths: List[Tuple[str, int]] = []
         for root in roots:
             for dirpath, dirnames, filenames in os.walk(root):
@@ -345,7 +349,9 @@ class Cleaner:
                         st = os.lstat(p)
                     except OSError:
                         continue
-                    if stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff and st.st_atime < cutoff:
+                    if (stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff and st.st_atime < cutoff
+                            and st.st_size >= 4096 and not f.endswith((".pid", ".lock", ".sock", ".lck"))
+                            and p not in in_use):
                         paths.append((p, st.st_size))
         return self._paths_category("tmp", "Old temporary files", "Files in the system's temp folders untouched for 10+ days.",
                                     "clock-hour-4", "safe", True, paths, roots, group_label="temporary files")
@@ -510,6 +516,9 @@ class Cleaner:
                 job.log(f"✗ {cid}: {e}")
             job.progress = (n + 1) / len(todo)
             job.data["freed"] = freed
+        from .events import events
+        if freed:
+            events.add("clean", f"Cleaner freed {_h(freed)}", freed=freed)
         self.stats["freed"] = self.stats.get("freed", 0) + freed
         self.stats["runs"] = self.stats.get("runs", 0) + 1
         self.stats["last"] = {"at": time.time(), "freed": freed}
@@ -544,3 +553,27 @@ def _tree_size(path: str) -> int:
 def _h(n: float) -> str:
     from .util import human_bytes
     return human_bytes(n)
+
+
+def _open_files(host_prefix: str) -> set:
+    """Host paths currently held open by any process (we share the host's PID namespace)."""
+    out = set()
+    proc = config.PROC
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        return out
+    for pid in pids:
+        fd_dir = os.path.join(proc, pid, "fd")
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fd_dir, fd))
+            except OSError:
+                continue
+            if target.startswith("/"):
+                out.add(host_prefix + target)
+    return out

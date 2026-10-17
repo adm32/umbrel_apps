@@ -19,6 +19,9 @@ if config.DEMO:
     demo.apply()
 
 from . import netlab, network, studio as studio_mod, widgets  # noqa: E402
+from .devices import devices, norm_mac, wake  # noqa: E402
+from .events import events  # noqa: E402
+from .notify import NotifyError, notifier, send as notify_send  # noqa: E402
 from .cleaner import Cleaner  # noqa: E402
 from .network import SpeedTest  # noqa: E402
 from .processes import ProcessMonitor  # noqa: E402
@@ -35,10 +38,12 @@ class State:
     cleaner: Cleaner
     studio: studio_mod.Studio
     session: aiohttp.ClientSession
-    lan: Dict[str, Any] = {}
+    flush: Any = None
+    last_lan_scan: float = 0.0
 
 
 S = State()
+TASKS = web.AppKey("tasks", list)
 
 
 def ok(data: Any, status: int = 200) -> web.Response:
@@ -82,6 +87,12 @@ async def sampler_loop(app: web.Application) -> None:
             await S.sampler.sample()
         except Exception:
             log.exception("sample failed")
+        try:
+            notifier.process(S.sampler.snapshot.get("alerts", []))
+            if notifier.queue and (S.flush is None or S.flush.done()):
+                S.flush = asyncio.ensure_future(notifier.flush(S.session))  # never block sampling on a slow webhook
+        except Exception:
+            log.exception("notifications failed")
         if S.procs.active:
             try:
                 await S.procs.sample(S.sampler.snapshot.get("memory", {}).get("total", 0))
@@ -105,6 +116,10 @@ async def slow_loop(app: web.Application) -> None:
         if time.monotonic() - last_smart > 1800:
             last_smart = time.monotonic()
             asyncio.ensure_future(S.sampler.refresh_smart())
+        mins = settings.get()["lan_scan_minutes"]
+        if mins and not jobs.running("lanscan") and time.time() - S.last_lan_scan > mins * 60:
+            S.last_lan_scan = time.time()
+            jobs.start("lanscan", lambda job: netlab.lan_scan(job, None))
         hours = settings.get()["auto_speedtest_hours"]
         last = S.speed.latest()
         if hours and not jobs.running("speedtest") and (not last or time.time() - last["at"] > hours * 3600):
@@ -123,12 +138,15 @@ async def on_startup(app: web.Application) -> None:
     S.speed = SpeedTest()
     S.cleaner = Cleaner()
     S.studio = studio_mod.Studio()
+    S.flush = None
+    S.last_lan_scan = time.time() - 60 * 60 * 24 + 120  # first background scan ~2 min after start
+    events.listeners.append(notifier.on_event)
     await S.sampler.sample()
-    app["tasks"] = [asyncio.ensure_future(sampler_loop(app)), asyncio.ensure_future(slow_loop(app))]
+    app[TASKS] = [asyncio.ensure_future(sampler_loop(app)), asyncio.ensure_future(slow_loop(app))]
 
 
 async def on_cleanup(app: web.Application) -> None:
-    for t in app.get("tasks", []):
+    for t in app.get(TASKS, []):
         t.cancel()
     try:
         S.sampler.save()
@@ -176,7 +194,7 @@ async def put_settings(request: web.Request) -> web.Response:
 
 @routes.get("/api/storage")
 async def get_storage(request: web.Request) -> web.Response:
-    drives = S.sampler.refresh_drives(force=request.query.get("refresh") == "1")
+    drives = await S.sampler.update_drives(force=request.query.get("refresh") == "1")
     out = []
     for d in drives:
         sm = smart.cached(d["name"]) or await smart.read(d["name"], d["transport"])
@@ -314,9 +332,12 @@ async def lan_download(request: web.Request) -> web.StreamResponse:
                                        "Content-Length": str(mb << 20)})
     await resp.prepare(request)
     chunk = os.urandom(1 << 20)  # incompressible, so proxies can't cheat
-    for _ in range(mb):
-        await resp.write(chunk)
-    await resp.write_eof()
+    try:
+        for _ in range(mb):
+            await resp.write(chunk)
+        await resp.write_eof()
+    except (ConnectionError, asyncio.CancelledError):
+        pass  # the browser stops reading once it has measured enough
     return resp
 
 
@@ -399,6 +420,92 @@ async def studio_delete(request: web.Request) -> web.Response:
         return err(str(e))
 
 
+# timeline, notifications, devices, export -----------------------------------
+
+@routes.get("/api/events")
+async def get_events(request: web.Request) -> web.Response:
+    limit = max(1, min(int(request.query.get("limit", "50")), 1000))
+    return ok({"events": events.recent(limit, request.query.get("kind") or None),
+               "uptime": S.sampler.latency.uptime()})
+
+
+@routes.post("/api/notify/test")
+async def notify_test(request: web.Request) -> web.Response:
+    b = await body(request)
+    cfg = {**settings.get()["notify"], **(b.get("notify") or {})}
+    try:
+        await notify_send(S.session, "Vitals test", "Notifications from your Umbrel are working.", "good", cfg)
+    except NotifyError as e:
+        return err(str(e))
+    return ok({"sent": True})
+
+
+@routes.get("/api/devices")
+async def get_devices(request: web.Request) -> web.Response:
+    j = jobs.latest("lanscan")
+    last = j.result if j and j.status == "done" else None
+    if last:
+        devices.annotate(last["devices"])
+    return ok({"last": last, "known": devices.known, "subnet": network.local_subnet()})
+
+
+@routes.put("/api/devices/{mac}")
+async def rename_device(request: web.Request) -> web.Response:
+    b = await body(request)
+    try:
+        return ok(devices.rename(request.match_info["mac"], str(b.get("nickname", ""))))
+    except ValueError as e:
+        return err(str(e))
+
+
+@routes.post("/api/tools/wol")
+async def wol(request: web.Request) -> web.Response:
+    b = await body(request)
+    try:
+        mac = norm_mac(str(b.get("mac", "")))
+        return ok({"message": await wake(mac, network.local_subnet())})
+    except ValueError as e:
+        return err(str(e))
+    except RuntimeError as e:
+        return err(str(e), 500)
+
+
+def _csv(name: str, header: list, rows: list) -> web.Response:
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    return web.Response(text=buf.getvalue(), content_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _iso(t: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+
+@routes.get("/api/export/{what}")
+async def export(request: web.Request) -> web.Response:
+    what = request.match_info["what"]
+    if what == "history.csv":
+        pts = S.sampler.history(request.query.get("range", "24h"))
+        return _csv("vitals-history.csv",
+                    ["time", "cpu_percent", "memory_percent", "cpu_temp_c", "power_w", "net_down_bytes_s",
+                     "net_up_bytes_s", "disk_read_bytes_s", "disk_write_bytes_s"],
+                    [[_iso(p["t"]), p.get("cpu"), p.get("mem"), p.get("temp"), p.get("power"), p.get("rx"),
+                      p.get("tx"), p.get("dr"), p.get("dw")] for p in pts])
+    if what == "speedtests.csv":
+        return _csv("vitals-speedtests.csv",
+                    ["time", "download_mbps", "upload_mbps", "ping_ms", "jitter_ms", "bufferbloat", "isp", "server"],
+                    [[_iso(r["at"]), r.get("download"), r.get("upload"), r.get("ping"), r.get("jitter"),
+                      r.get("bufferbloat"), r.get("isp"), r.get("colo")] for r in S.speed.history])
+    if what == "events.csv":
+        return _csv("vitals-events.csv", ["time", "kind", "level", "text"],
+                    [[_iso(e["at"]), e["kind"], e["level"], e["text"]] for e in reversed(events.recent(1000))])
+    return err("Unknown export", 404)
+
+
 # widgets (fetched by umbreld, not through the app proxy) ---------------------
 
 @routes.get("/widgets/{id}")
@@ -430,6 +537,12 @@ async def index(request: web.Request) -> web.FileResponse:
 
 @web.middleware
 async def errors_mw(request: web.Request, handler):
+    if request.method in ("POST", "PUT", "DELETE") and request.path.startswith("/api/"):
+        # Cross-site forms and "simple" requests can't send application/json without a
+        # CORS preflight (which we never answer), so this blocks CSRF from other sites/apps.
+        # (No Origin/Host comparison: Umbrel's proxy may rewrite Host.)
+        if request.path != "/api/lantest/upload" and request.content_type != "application/json":
+            return err("Expected a JSON request", 415)
     try:
         resp = await handler(request)
     except web.HTTPException:

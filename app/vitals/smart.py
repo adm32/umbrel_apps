@@ -193,12 +193,14 @@ async def read(dev: str, transport: str, force: bool = False) -> Dict[str, Any]:
         data = await _smartctl(dev)
         res = parse(data)
         if not res["available"] and not res["standby"] and transport == "usb":
-            # many USB enclosures need the SAT pass-through
-            data = await _smartctl(dev, ["-d", "sat"])
-            alt = parse(data)
-            if alt["available"] or alt["standby"]:
-                res = alt
-            elif res.get("error"):
+            # USB enclosures hide the drive behind a bridge chip: try the common ones
+            # (SATA via SAT, and the JMicron / ASMedia / Realtek NVMe bridges)
+            for dtype in ("sat", "sntjmicron", "sntasmedia", "sntrealtek"):
+                alt = parse(await _smartctl(dev, ["-d", dtype]))
+                if alt["available"] or alt["standby"]:
+                    res = alt
+                    break
+            else:
                 res["error"] = "This USB enclosure doesn't pass health data through"
         if res.get("standby") and cached and cached.get("available"):
             keep = dict(cached)

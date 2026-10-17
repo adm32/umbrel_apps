@@ -2,8 +2,8 @@ name: Build Vitals image
 
 on:
   push:
-    branches: [main]
-    paths: ["app/**", ".github/workflows/build.yml"]
+    paths: ["app/**", ".github/**", "adam-vitals/**"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,51 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r app/requirements.txt
+      - name: Run tests
+        working-directory: app
+        run: python -m unittest discover -s tests -t . -v
+
+  smoke:
+    name: Real container on Linux
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t vitals:ci app
+
+      - name: Start it like umbrelOS does
+        run: |
+          sudo mkdir -p /home/umbrel/umbrel/app-data/demo-app /home/umbrel/umbrel/home
+          mkdir -p "$RUNNER_TEMP/vitals-data"
+          docker run -d --name vitals-smoke --privileged --pid host \
+            -v /:/host:rslave -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$RUNNER_TEMP/vitals-data:/data" -e UMBREL_ROOT=/home/umbrel/umbrel \
+            -p 7468:3000 vitals:ci
+
+      - name: Check every feature
+        run: python3 .github/smoke_test.py http://localhost:7468
+
+      - name: Server log
+        if: always()
+        run: |
+          docker logs vitals-smoke 2>&1 | tail -150
+          if docker logs vitals-smoke 2>&1 | grep -q "Traceback"; then echo "::error::Server logged an exception"; exit 1; fi
+
   build:
+    name: Publish image
+    needs: [test, smoke]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

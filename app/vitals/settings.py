@@ -30,6 +30,10 @@ DEFAULTS: Dict[str, Any] = {
     "auto_speedtest_hours": 0,     # 0 = off
     "custom_widget": ["cpu", "cpu_temp", "power", "net_down"],
     "alerts": {"cpu_temp": 85, "disk_temp": 55, "disk_usage": 90},
+    # push notifications: none | ntfy | discord | telegram | webhook
+    "notify": {"type": "none", "url": "", "topic": "", "token": "", "chat": "",
+               "min_level": "warning", "resolved": True},
+    "lan_scan_minutes": 0,         # scan the LAN in the background and report new devices (0 = off)
 }
 
 _settings: Dict[str, Any] = {}
@@ -91,6 +95,21 @@ def update(patch: Dict[str, Any]) -> Dict[str, Any]:
     while len(cw) < 4:
         cw.append(DEFAULTS["custom_widget"][len(cw)])
     merged["custom_widget"] = cw
+    n = merged.get("notify") or {}
+    if n.get("type") not in ("none", "ntfy", "discord", "telegram", "webhook"):
+        n["type"] = "none"
+    for k in ("url", "topic", "token", "chat"):
+        n[k] = str(n.get(k) or "").strip()[:300]
+    if n.get("min_level") not in ("warning", "critical"):
+        n["min_level"] = "warning"
+    n["resolved"] = bool(n.get("resolved", True))
+    merged["notify"] = n
+    try:
+        merged["lan_scan_minutes"] = int(merged["lan_scan_minutes"])
+    except (TypeError, ValueError):
+        merged["lan_scan_minutes"] = 0
+    if merged["lan_scan_minutes"] not in (0, 15, 30, 60, 180):
+        merged["lan_scan_minutes"] = 0
     plug = merged.get("smart_plug") or {}
     if plug.get("type") not in ("none", "shelly1", "shelly2", "tasmota"):
         plug["type"] = "none"

@@ -203,11 +203,33 @@ def apply() -> None:
             ("192.168.1.60", "Living-Room-TV", "Samsung Electronics", False, False),
             ("192.168.1.77", None, "Espressif (IoT)", False, False),
         ]
-        return {"subnet": "192.168.1.0/24", "at": time.time(), "devices": [
-            {"ip": ip, "name": n, "vendor": v, "mac": ":".join(f"{random.randint(0, 255):02X}" for _ in range(6)),
-             "latency": round(random.uniform(0.3, 9), 2), "router": r, "self": me} for ip, n, v, r, me in devs]}
+        from .devices import devices as registry
+        out = [{"ip": ip, "name": n, "vendor": v, "mac": "A4:83:E7:%02X:%02X:%02X" % (i, i * 7 % 256, i * 13 % 256),
+                "latency": round(random.uniform(0.3, 9), 2), "router": r, "self": me}
+               for i, (ip, n, v, r, me) in enumerate(devs)]
+        new = registry.merge(out)
+        return {"subnet": "192.168.1.0/24", "at": time.time(), "devices": out, "new": len(new)}
 
     netlab.lan_scan = fake_lan
+
+    import vitals.devices as devmod
+
+    async def fake_wake(mac: str, subnet: Any) -> str:
+        devmod.norm_mac(mac)
+        return f"Wake-up packet sent to {devmod.norm_mac(mac)}"
+
+    devmod.wake = fake_wake
+
+    from .events import events
+    if not events.items:
+        now = time.time()
+        events.add("boot", "Your Umbrel restarted", at=now - 86400 * 3)
+        events.add("drive_added", "WD Red Plus 4TB (4.00 TB) was connected", at=now - 86400 * 2)
+        events.add("outage", "The internet was down for 4 minutes", at=now - 86400 * 1.2,
+                   start=now - 86400 * 1.2 - 240, end=now - 86400 * 1.2, seconds=240)
+        events.add("speedtest", "Speed test: 942 Mb/s down, 41 Mb/s up, 11 ms ping", at=now - 3600 * 20)
+        events.add("new_device", "New device joined your network: Espressif (192.168.1.77)", at=now - 3600 * 6)
+        events.add("clean", "Cleaner freed 3.2 GB", at=now - 3600 * 2)
 
     async def fake_listening() -> List[Dict[str, Any]]:
         rows = [("tcp", 22, "sshd", None), ("tcp", 80, "umbreld", "umbrelOS"), ("tcp", 443, "umbreld", "umbrelOS"),

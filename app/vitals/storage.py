@@ -5,6 +5,7 @@ import asyncio
 import mmap
 import os
 import random
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -87,7 +88,9 @@ def _labels() -> Dict[str, str]:
     try:
         for name in os.listdir(d):
             target = os.path.basename(os.readlink(os.path.join(d, name)))
-            out[target] = name.encode().decode("unicode_escape")
+            # udev escapes bytes as \xNN; decode them back to UTF-8 (é, ü, emoji…)
+            raw = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), name)
+            out[target] = raw.encode("latin-1", "replace").decode("utf-8", "replace")
     except OSError:
         pass
     return out
