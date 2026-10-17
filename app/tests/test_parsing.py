@@ -67,6 +67,11 @@ class SmartParsing(unittest.TestCase):
         self.assertEqual(r["health"], "critical")
         self.assertIn("5%", r["issues"][0])
 
+    def test_spare_threshold_zero_is_not_failing(self):
+        # virtual NVMe drives (cloud VMs, some USB bridges) report spare 0 / threshold 0
+        self.assertEqual(smart.parse(nvme_json(available_spare=0, available_spare_threshold=0))["health"], "good")
+        self.assertEqual(smart.parse(nvme_json(available_spare=5, available_spare_threshold=10))["health"], "critical")
+
     def test_ata_reallocated_is_warning_and_crc_is_only_a_note(self):
         r = smart.parse(ata_json(realloc=8))
         self.assertEqual(r["health"], "warning")

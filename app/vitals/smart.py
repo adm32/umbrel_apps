@@ -114,7 +114,7 @@ def parse(data: Dict[str, Any]) -> Dict[str, Any]:
         if (nvme.get("media_errors") or 0) > 0:
             issues.append(f"{nvme['media_errors']} media/data integrity errors logged")
         spare, thr = nvme.get("available_spare"), nvme.get("available_spare_threshold")
-        if spare is not None and thr is not None and spare <= thr:
+        if spare is not None and thr and spare < thr:  # thr 0 = not reported (virtual drives)
             issues.append("Spare blocks are below the safe threshold")
             critical = True
         out["attributes"] = [{"name": k.replace("_", " ").capitalize(), "raw": v}

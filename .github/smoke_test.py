@@ -74,7 +74,8 @@ check("storage: drives found", len(st["drives"]) > 0, ", ".join(f"{d['name']} {d
 check("storage: partition usage", any(p["usage"] for d in st["drives"] for p in d["partitions"]))
 check("storage: writable benchmark targets", len(st["targets"]) > 0, ", ".join(t["mountpoint"] for t in st["targets"]))
 for d in st["drives"]:
-    notes.append(f"SMART {d['name']}: {d['smart'].get('health') or d['smart'].get('error')}")
+    sm = d["smart"]
+    notes.append(f"SMART {d['name']}: {sm.get('health') or sm.get('error')} {sm.get('issues') or ''}")
 
 net = get("/api/network")
 default = [i for i in net["interfaces"] if i["default"]]
