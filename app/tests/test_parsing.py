@@ -270,3 +270,34 @@ class SpeedMaths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FoundOnRealLinux(unittest.TestCase):
+    """Regressions caught by the container smoke test on a real Linux host."""
+
+    def test_big_networks_scan_our_own_slice(self):
+        from vitals.netlab import scan_range
+        n, note = scan_range("10.1.0.0/20", ["10.1.0.154"])
+        self.assertEqual(str(n), "10.1.0.0/24")
+        self.assertIn("10.1.0.0/20", note)
+        n, note = scan_range("192.168.1.0/24", [])
+        self.assertEqual((str(n), note), ("192.168.1.0/24", None))
+        with self.assertRaises(ValueError):
+            scan_range("10.0.0.0/8", ["192.168.1.5"])
+
+    def test_cloudflare_server_timing(self):
+        self.assertEqual(network.server_ms("cfSpeedEdge;dur=3, cfSpeedWorker;dur=37"), 37.0)
+        self.assertEqual(network.server_ms(""), 0.0)
+
+    def test_own_container_processes(self):
+        from vitals.processes import ProcessMonitor
+        pm = ProcessMonitor.__new__(ProcessMonitor)
+        pm.cgroup = {}
+        pm.self_id = "a" * 64
+        other = "b" * 64
+        write(os.path.join(PROC, "501", "cgroup"), "0::/\n")                                  # us
+        write(os.path.join(PROC, "502", "cgroup"), f"0::/../docker-{other}.scope\n")         # another app
+        write(os.path.join(PROC, "503", "cgroup"), "0::/../../init.scope\n")                 # the host
+        self.assertEqual(pm._container(501), "a" * 64)
+        self.assertEqual(pm._container(502), other)
+        self.assertIsNone(pm._container(503))

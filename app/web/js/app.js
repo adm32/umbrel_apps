@@ -66,11 +66,13 @@ function renderShell() {
   $('#app').innerHTML = `
     <aside class="sidebar glass lensed" data-lens="60" data-bevel="22" aria-label="Main navigation">
       <div class="brandrow"><img src="img/icon.svg" alt=""><div><div class="t">Vitals</div><div class="s" id="statusline"><span class="dot pulse"></span>Connecting…</div></div></div>
+      <button class="searchbtn" data-palette>${icon('search', 16)}Search<kbd>${/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></button>
       <nav class="nav">${navHTML()}</nav>
       <div class="sidefoot" id="sidefoot"></div>
     </aside>
     <header class="topbar glass lensed" data-lens="40">
       <img src="img/icon.svg" alt=""><div class="t" id="toptitle">Vitals</div><span id="topstatus"></span>
+      <button class="btn ghost icon" data-palette aria-label="Search">${icon('search', 19)}</button>
     </header>
     <main class="main" id="main"><div id="page"></div></main>
     <nav class="tabbar glass lensed" data-lens="50" data-bevel="20" aria-label="Sections">
@@ -78,6 +80,10 @@ function renderShell() {
       <a href="#" data-more>${icon('apps', 22)}<span>More</span></a>
     </nav>`;
   $('[data-more]').addEventListener('click', (e) => { e.preventDefault(); toggleMore(); });
+  document.querySelectorAll('[data-palette]').forEach((b) => b.addEventListener('click', openPalette));
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  });
 }
 
 function toggleMore(force) {
@@ -140,10 +146,11 @@ function applySettings() {
 // ------------------------------------------------------------------ routing
 
 async function route() {
-  const id = (location.hash.replace('#', '').split('/')[0]) || 'overview';
-  const meta = PAGES.find((p) => p.id === id) || PAGES[0];
+  const [id, sub = ''] = location.hash.replace('#', '').split('/');
+  const meta = PAGES.find((p) => p.id === (id || 'overview')) || PAGES[0];
+  app.sub = sub;
   toggleMore(false);
-  if (app.pageId === meta.id && app.page) return;
+  if (app.pageId === meta.id && app.page) { app.page.onRoute?.(sub); return; }
   try { app.page?.destroy?.(); } catch (e) { console.error(e); }
   app.page = null;
   app.pageId = meta.id;
@@ -238,6 +245,71 @@ async function boot() {
   poll();
   setInterval(poll, 2000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+}
+
+// ------------------------------------------------------------------ command palette (⌘K)
+
+const ACTIONS = [
+  { t: 'Run a speed test', ic: 'brand-speedtest', go: 'network/speed-run' },
+  { t: 'Scan for leftover files', ic: 'brush', go: 'cleaner/scan' },
+  { t: 'Find devices on my network', ic: 'radar-2', go: 'netlab/devices' },
+  { t: 'Ping a host', ic: 'activity-heartbeat', go: 'netlab/ping' },
+  { t: 'Traceroute', ic: 'route', go: 'netlab/trace' },
+  { t: 'DNS lookup', ic: 'list-search', go: 'netlab/dns' },
+  { t: 'Check open ports', ic: 'lock-open', go: 'netlab/ports' },
+  { t: 'Subnet calculator', ic: 'binary', go: 'netlab/subnet' },
+  { t: 'Subnetting practice quiz', ic: 'school', go: 'netlab/quiz' },
+  { t: 'LAN speed test', ic: 'transfer', go: 'netlab/lan' },
+  { t: 'Speed test a drive', ic: 'gauge', go: 'storage/bench' },
+  { t: 'Drive health', ic: 'stethoscope', go: 'storage' },
+  { t: 'Scan my sample library', ic: 'music', go: 'studio/library' },
+  { t: 'Tap tempo & delay times', ic: 'hand-click', go: 'studio/tools' },
+  { t: 'Data usage', ic: 'chart-bar', go: 'network/usage' },
+  { t: 'Set up notifications', ic: 'bell', go: 'settings/notify' },
+  { t: 'Switch theme: Light', ic: 'palette', theme: 'light' },
+  { t: 'Switch theme: Home', ic: 'home', theme: 'home' },
+  { t: 'Switch theme: Dark', ic: 'palette', theme: 'dark' },
+];
+
+function openPalette() {
+  if ($('.palette')) return;
+  const items = [...PAGES.map((p) => ({ t: p.title, ic: p.icon, go: p.id, kind: 'Page' })), ...ACTIONS.map((a) => ({ ...a, kind: a.theme ? 'Theme' : 'Action' }))];
+  const el = document.createElement('div');
+  el.className = 'palette';
+  el.innerHTML = `<div class="box glass" role="dialog" aria-label="Search"><input placeholder="Search pages and actions…" aria-label="Search" autocomplete="off"><div class="res" role="listbox"></div></div>`;
+  document.body.appendChild(el);
+  const input = el.querySelector('input');
+  const res = el.querySelector('.res');
+  let list = items;
+  let sel = 0;
+  const close = () => el.remove();
+  const draw = () => {
+    res.innerHTML = list.length ? list.map((x, i) => `<div class="it ${i === sel ? 'sel' : ''}" role="option" data-i="${i}">${icon(x.ic, 18)}${esc(x.t)}<small>${x.kind}</small></div>`).join('')
+      : '<div class="it faint">Nothing found</div>';
+    res.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  };
+  const pick = async (x) => {
+    close();
+    if (!x) return;
+    if (x.theme) { await app.saveSettings({ theme: x.theme }); toast(`Theme: ${x.t.split(': ')[1]}`, 'good', 1500); return; }
+    location.hash = x.go;
+  };
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase().trim();
+    list = !q ? items : items.filter((x) => q.split(/\s+/).every((w) => `${x.t} ${x.kind}`.toLowerCase().includes(w)));
+    sel = 0;
+    draw();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { sel = Math.min(list.length - 1, sel + 1); draw(); e.preventDefault(); }
+    if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); draw(); e.preventDefault(); }
+    if (e.key === 'Enter') pick(list[sel]);
+    if (e.key === 'Escape') close();
+  });
+  res.addEventListener('click', (e) => { const it = e.target.closest('[data-i]'); if (it) pick(list[+it.dataset.i]); });
+  el.addEventListener('click', (e) => { if (e.target === el) close(); });
+  draw();
+  input.focus();
 }
 
 window.__vitalsGlass = (root) => refreshLenses(root);

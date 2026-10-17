@@ -13,7 +13,7 @@ import shutil
 import socket
 import time
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import dns.flags
 import dns.rdatatype
@@ -283,9 +283,16 @@ async def lan_scan(job: Job, subnet: Optional[str]) -> Dict[str, Any]:
     net = subnet or local_subnet()
     if not net:
         raise RuntimeError("Couldn't work out your local network range")
-    n = ipaddress.ip_network(net, strict=False)
-    if n.version != 4 or n.num_addresses > 1024:
-        raise ValueError("Pick an IPv4 range of /22 or smaller")
+    own: List[str] = []
+    try:
+        for i in await interfaces():
+            own += [a.split("/")[0] for a in i.get("ipv4", [])]
+    except Exception:
+        pass
+    n, note = scan_range(net, own)
+    if note:
+        job.log(note)
+        job.data["note"] = note
     job.data["command"] = f"nmap -sn {n}"
     job.data["subnet"] = str(n)
     devices: Dict[str, Dict[str, Any]] = {}
@@ -345,7 +352,7 @@ async def lan_scan(job: Job, subnet: Optional[str]) -> Dict[str, Any]:
     out = sorted(devices.values(), key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
     from .devices import devices as registry
     new = registry.merge(out)
-    return {"subnet": str(n), "devices": out, "at": time.time(), "new": len(new)}
+    return {"subnet": str(n), "devices": out, "at": time.time(), "new": len(new), "note": note}
 
 
 # ---------------------------------------------------------------- listening ports
@@ -398,8 +405,34 @@ async def listening() -> List[Dict[str, Any]]:
     return sorted(rows.values(), key=lambda r: (r["scope"] != "network", r["port"]))
 
 
+_SELF: List[Optional[str]] = []
+
+
 def _container_of(pid: int) -> Optional[str]:
     from .util import read_text
     raw = read_text(f"{config.PROC}/{pid}/cgroup") or ""
     m = re.search(r"([0-9a-f]{64})", raw)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    if not _SELF:
+        from .processes import own_container_id
+        _SELF.append(own_container_id())
+    return _SELF[0] if raw.strip().endswith("::/") else None
+
+
+def scan_range(net: str, own_ips: List[str]) -> Tuple[ipaddress.IPv4Network, Optional[str]]:
+    """Big networks (a /16 at work, a /20 in the cloud) are narrowed to the /24 we're in."""
+    n = ipaddress.ip_network(net, strict=False)
+    if n.version != 4:
+        raise ValueError("Only IPv4 networks can be scanned")
+    if n.num_addresses <= 1024:
+        return n, None
+    for ip in own_ips:
+        try:
+            a = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if a in n:
+            narrow = ipaddress.ip_network(f"{a}/24", strict=False)
+            return narrow, f"Your network ({n}) is big, so only the part your Umbrel is in ({narrow}) was scanned."
+    raise ValueError("Pick an IPv4 range of /22 or smaller")

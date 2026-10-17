@@ -32,6 +32,8 @@ def available() -> bool:
 
 
 async def _smartctl(dev: str, extra: Optional[List[str]] = None) -> Dict[str, Any]:
+    if extra is None and dev.startswith("nvme"):
+        extra = ["-d", "nvme"]  # smartctl guesses the type from the path, and /host/dev/... hides it
     cmd = ["smartctl", "-a", "-j", "-n", "standby"] + (extra or []) + [_dev_path(dev)]
     _, out, err = await run(cmd, timeout=40)
     try:

@@ -24,6 +24,16 @@ def _host_users() -> Dict[int, str]:
     return out
 
 
+def own_container_id() -> Optional[str]:
+    """Our container's id. In our own cgroup namespace our processes show "0::/", so map that to us."""
+    for path in ("/proc/self/mountinfo", "/proc/self/cgroup"):
+        m = re.search(r"/(?:docker/)?containers/([0-9a-f]{64})/", read_text(path) or "") or \
+            re.search(r"docker-([0-9a-f]{64})\.scope", read_text(path) or "")
+        if m:
+            return m.group(1)
+    return None
+
+
 class ProcessMonitor:
     """Samples processes only while someone is looking (UI or a widget)."""
 
@@ -36,6 +46,7 @@ class ProcessMonitor:
         self.last_request = float("-inf")
         self.last_sample = 0.0
         self.ncpu = psutil.cpu_count() or 1
+        self.self_id = own_container_id() if config.IS_LINUX else None
 
     def touch(self) -> None:
         self.last_request = time.monotonic()
@@ -50,6 +61,8 @@ class ProcessMonitor:
         raw = read_text(f"{config.PROC}/{pid}/cgroup") or ""
         m = _CID.search(raw)
         cid = m.group(1) if m else None
+        if cid is None and self.self_id and raw.strip().endswith("::/"):
+            cid = self.self_id  # a process in our own cgroup namespace = this container
         self.cgroup[pid] = cid
         return cid
 

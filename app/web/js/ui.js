@@ -126,6 +126,7 @@ export const api = {
 export async function runJob(startUrl, body, onUpdate, interval = 350) {
   let job = await api.post(startUrl, body);
   let since = 0;
+  let misses = 0;
   const lines = [];
   for (;;) {
     lines.push(...(job.lines || []));
@@ -133,7 +134,14 @@ export async function runJob(startUrl, body, onUpdate, interval = 350) {
     onUpdate?.({ ...job, allLines: lines });
     if (job.status !== 'running') return { ...job, allLines: lines };
     await new Promise((r) => setTimeout(r, interval));
-    job = await api.get(`/api/jobs/${job.id}?since=${since}`);
+    try {
+      job = await api.get(`/api/jobs/${job.id}?since=${since}`);
+      misses = 0;
+    } catch (e) {
+      // a Wi-Fi blip shouldn't abandon a job that's still running on the server
+      if (++misses > 10) throw e;
+      job = { ...job, lines: [] };
+    }
   }
 }
 export const cancelJob = (id) => api.post(`/api/jobs/${id}/cancel`).catch(() => {});
@@ -269,3 +277,40 @@ export const store = {
   get(k, d) { try { const v = localStorage.getItem('vitals:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('vitals:' + k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
+
+/** Small ⓘ button that reveals an explanation, so pages stay calm by default. */
+export function info(html, label = 'More info') {
+  return `<button type="button" class="infobtn" aria-label="${esc(label)}" data-info="${esc(html)}">${icon('info-circle', 15)}</button>`;
+}
+
+/** Collapsible "How it works" section (closed by default). */
+export function learn(html, title = 'How it works') {
+  return `<details class="learn"><summary>${icon('school', 15)}${esc(title)}</summary><div class="explain">${html}</div></details>`;
+}
+
+let tipEl = null;
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('.infobtn');
+  if (!b) { if (tipEl && !e.target.closest('.tip')) { tipEl.remove(); tipEl = null; } return; }
+  e.preventDefault();
+  e.stopPropagation();
+  if (tipEl && tipEl.__for === b) { tipEl.remove(); tipEl = null; return; }
+  tipEl?.remove();
+  tipEl = document.createElement('div');
+  tipEl.className = 'tip glass';
+  tipEl.__for = b;
+  tipEl.innerHTML = b.dataset.info;
+  document.body.appendChild(tipEl);
+  const r = b.getBoundingClientRect();
+  const w = Math.min(320, window.innerWidth - 24);
+  tipEl.style.width = `${w}px`;
+  tipEl.style.left = `${Math.max(12, Math.min(window.innerWidth - w - 12, r.left + r.width / 2 - w / 2))}px`;
+  const below = r.bottom + 8 + tipEl.offsetHeight < window.innerHeight;
+  tipEl.style.top = `${below ? r.bottom + 8 : r.top - tipEl.offsetHeight - 8}px`;
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tipEl) { tipEl.remove(); tipEl = null; } });
+document.addEventListener('scroll', () => { if (tipEl) { tipEl.remove(); tipEl = null; } }, true);
+
+export function downloadLink(href, label = 'Export CSV') {
+  return `<a class="btn sm ghost" href="${esc(href)}" download title="${esc(label)}">${icon('cloud-download', 15)}<span class="hide-sm-text">${esc(label)}</span></a>`;
+}

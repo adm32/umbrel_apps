@@ -212,3 +212,44 @@ class Widgets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloudflareLookup(unittest.TestCase):
+    """speed.cloudflare.com/meta started returning 403 without a Referer; both paths must work."""
+
+    def test_meta_with_referer_and_header_fallback(self):
+        from vitals import network
+        seen = {}
+
+        async def meta(request):
+            seen["referer"] = request.headers.get("Referer")
+            if request.app["mode"] == "ok" and request.headers.get("Referer"):
+                return web.json_response({"clientIp": "1.2.3.4", "asOrganization": "ISP", "colo": {"iata": "BUD", "city": "Budapest"}})
+            return web.json_response({}, status=403)
+
+        async def down(request):
+            return web.Response(headers={"cf-meta-ip": "5.6.7.8", "cf-meta-colo": "AMS"})
+
+        async def run():
+            results = []
+            for mode in ("ok", "blocked"):
+                app = web.Application()
+                app["mode"] = mode
+                app.router.add_get("/meta", meta)
+                app.router.add_get("/__down", down)
+                server = TestServer(app)
+                await server.start_server()
+                old = network.CF
+                network.CF = f"http://127.0.0.1:{server.port}"
+                try:
+                    async with ClientSession() as s:
+                        results.append(await network.cf_meta(s))
+                finally:
+                    network.CF = old
+                    await server.close()
+            return results
+
+        ok, fallback = asyncio.run(run())
+        self.assertEqual(seen["referer"], "https://speed.cloudflare.com/")
+        self.assertEqual((ok["clientIp"], ok["colo"]), ("1.2.3.4", "BUD (Budapest)"))
+        self.assertEqual((fallback["clientIp"], fallback["colo"]), ("5.6.7.8", "AMS"))

@@ -210,8 +210,7 @@ async def public_info(session: aiohttp.ClientSession, force: bool = False) -> Op
     if not force and time.time() - _public["at"] < 900 and _public["data"]:
         return _public["data"]
     try:
-        async with session.get("https://speed.cloudflare.com/meta", timeout=aiohttp.ClientTimeout(total=6)) as r:
-            m = await r.json(content_type=None)
+        m = await cf_meta(session)
         data = {
             "ip": m.get("clientIp"),
             "isp": m.get("asOrganization"),
@@ -449,6 +448,37 @@ def _dur(sec: float) -> str:
 # ---------------------------------------------------------------- speed test (Cloudflare)
 
 CF = "https://speed.cloudflare.com"
+# Cloudflare only answers /meta for requests that look like they come from its own page
+CF_HEADERS = {"Referer": "https://speed.cloudflare.com/", "Origin": "https://speed.cloudflare.com"}
+
+
+async def cf_meta(session: aiohttp.ClientSession) -> Dict[str, Any]:
+    """Public IP / ISP / location. Falls back to the cf-meta-* headers on a tiny download."""
+    timeout = aiohttp.ClientTimeout(total=6)
+    try:
+        async with session.get(f"{CF}/meta", headers=CF_HEADERS, timeout=timeout) as r:
+            if r.status == 200:
+                m = await r.json(content_type=None)
+                if m.get("clientIp"):
+                    c = m.get("colo")
+                    if isinstance(c, dict):  # newer API returns an object
+                        m["colo"] = " ".join(x for x in (c.get("iata"), f"({c['city']})" if c.get("city") else "") if x)
+                    return m
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        pass
+    async with session.get(f"{CF}/__down?bytes=0", headers=CF_HEADERS, timeout=timeout) as r:
+        await r.read()
+        h = r.headers
+        if not h.get("cf-meta-ip"):
+            raise aiohttp.ClientError(f"speed.cloudflare.com answered {r.status}")
+        return {"clientIp": h.get("cf-meta-ip"), "asn": h.get("cf-meta-asn"), "colo": h.get("cf-meta-colo"),
+                "country": h.get("cf-meta-country"), "city": h.get("cf-meta-city"), "asOrganization": None}
+
+
+def server_ms(header: str) -> float:
+    """Time Cloudflare spent before answering (Server-Timing: cfSpeedEdge;dur=3, cfSpeedWorker;dur=37)."""
+    durs = [float(x) for x in re.findall(r"dur=([\d.]+)", header or "")]
+    return max(durs) if durs else 0.0
 
 
 def bufferbloat_grade(idle: Optional[float], loaded: Optional[float]) -> Optional[str]:
@@ -474,8 +504,7 @@ class SpeedTest:
     async def run(self, job: Job, session: aiohttp.ClientSession) -> Dict[str, Any]:
         res: Dict[str, Any] = {"at": time.time(), "server": "Cloudflare"}
         try:
-            async with session.get(f"{CF}/meta", timeout=aiohttp.ClientTimeout(total=6)) as r:
-                meta = await r.json(content_type=None)
+            meta = await cf_meta(session)
             res["isp"] = meta.get("asOrganization")
             res["ip"] = meta.get("clientIp")
             res["colo"] = meta.get("colo")
@@ -488,19 +517,20 @@ class SpeedTest:
         rtts: List[float] = []
         for i in range(12):
             t0 = time.perf_counter()
-            async with session.get(f"{CF}/__down?bytes=0", timeout=aiohttp.ClientTimeout(total=5)) as r:
+            async with session.get(f"{CF}/__down?bytes=0", headers=CF_HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as r:
                 await r.read()
-                server_ms = 0.0
-                m = re.search(r"dur=([\d.]+)", r.headers.get("Server-Timing", ""))
-                if m:
-                    server_ms = float(m.group(1))
-            rtts.append(max(0.1, (time.perf_counter() - t0) * 1000 - server_ms))
+                busy = server_ms(r.headers.get("Server-Timing", ""))
+            rtts.append(max(0.1, (time.perf_counter() - t0) * 1000 - busy))
             job.progress = 0.08 * (i + 1) / 12
         rtts = rtts[2:]  # drop connection warm-up
         res["ping"] = round(statistics.median(rtts), 1)
         res["jitter"] = round(statistics.mean(abs(a - b) for a, b in zip(rtts, rtts[1:])), 1)
         job.data["ping"] = res["ping"]
         job.data["jitter"] = res["jitter"]
+
+        # ICMP baseline before loading the line, so the bufferbloat grade compares like with like
+        idle = [ms for ms in await asyncio.gather(*(ping_once("1.1.1.1", 1) for _ in range(3))) if ms is not None]
+        idle_icmp = statistics.median(idle) if idle else None
 
         loaded: List[float] = []
         stop_ping = asyncio.Event()
@@ -530,7 +560,6 @@ class SpeedTest:
             stop_ping.set()
             await pinger
 
-        idle_icmp = await ping_once("1.1.1.1", 1)
         worst = max([x for x in (res["downloadLoadedPing"], res["uploadLoadedPing"]) if x is not None], default=None)
         res["bufferbloat"] = bufferbloat_grade(idle_icmp, worst)
         res["idlePingIcmp"] = idle_icmp
@@ -553,7 +582,7 @@ class SpeedTest:
             nonlocal total, counted
             while time.perf_counter() < stop and not job.cancelled:
                 try:
-                    async with session.get(f"{CF}/__down?bytes=25000000",
+                    async with session.get(f"{CF}/__down?bytes=25000000", headers=CF_HEADERS,
                                            timeout=aiohttp.ClientTimeout(total=duration + 5)) as r:
                         async for chunk in r.content.iter_any():
                             n = len(chunk)
@@ -597,7 +626,7 @@ class SpeedTest:
                 size = chunk_size
                 t0 = time.perf_counter()
                 try:
-                    async with session.post(f"{CF}/__up", data=payload[:size],
+                    async with session.post(f"{CF}/__up", data=payload[:size], headers=CF_HEADERS,
                                             timeout=aiohttp.ClientTimeout(total=duration + 10)) as r:
                         await r.read()
                 except (aiohttp.ClientError, asyncio.TimeoutError):
