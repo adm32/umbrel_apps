@@ -79,7 +79,8 @@ class Notifier:
     """Turns the sampler's alert list into one-off notifications and timeline events."""
 
     STATE = config.DATA / "notify_state.json"
-    EVENT_KINDS = {"new_device": "warning", "outage": "warning", "lan_outage": "critical", "boot": "warning"}
+    EVENT_KINDS = {"new_device": "warning", "outage": "warning", "lan_outage": "critical", "boot": "warning",
+                   "login_fail": "critical", "login_new": "warning"}
 
     def __init__(self) -> None:
         # alerts that were already active before a restart aren't announced twice

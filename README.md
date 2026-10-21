@@ -93,6 +93,25 @@ A new image is only published when both pass. To run the unit tests yourself:
 cd app && python3 -m unittest discover -s tests -t .
 ```
 
+## Opening Vitals on your own domain
+If you publish Vitals on a domain (for example `vitals.example.com` through the Cloudflare Tunnel app), it asks for a password there. On your home network and over Tailscale it opens without one.
+
+1. At home, open Vitals → **Settings → Security** → **Set password**. Until you do, Vitals refuses every visit through the domain.
+2. Optional but recommended: turn on **Two-factor codes** and scan the QR code with your authenticator app.
+3. Point the tunnel at `http://umbrel.local:7468` (or your Umbrel's IP and port 7468).
+
+Setting the password from outside your home network needs the one-time setup code. Find it in umbrelOS under **Files → Apps → adam-vitals → data → SETUP-CODE.txt**.
+
+How it's protected:
+- Passwords are stored as scrypt hashes, and sessions as hashed tokens.
+- Login cookies are HttpOnly, SameSite and Secure over HTTPS.
+- After 5 wrong attempts a visitor is locked out for 1 minute, doubling up to 1 hour. Many failures from different addresses slow everyone down.
+- Failed attempts and sign-ins from new addresses show up in the timeline and as notifications.
+- Pages get a strict Content-Security-Policy, and the domain can't be framed (no clickjacking).
+- Home-screen widgets can only be read from inside the Umbrel, never through the tunnel.
+
+For extra safety you can also put **Cloudflare Access** in front of the domain (free, emails you a login code).
+
 ## Permissions
 To read hardware sensors, drive health and every app's activity, Vitals needs deep access to your Umbrel:
 

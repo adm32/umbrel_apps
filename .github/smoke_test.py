@@ -138,6 +138,41 @@ try:
 except urllib.error.HTTPError as e:
     check("CSRF guard rejects non-JSON writes", e.code == 415)
 
+# ---------------------------------------------------------------- sign-in through a public domain
+TUN = {"Host": "vitals.example.com", "Cf-Connecting-Ip": "81.2.69.160", "X-Forwarded-For": "81.2.69.160"}
+
+
+def tun(method, path, body=None, cookie=None):
+    h = dict(TUN, **({"Cookie": cookie} if cookie else {}))
+    data = json.dumps(body).encode() if body is not None else None
+    if data:
+        h["Content-Type"] = "application/json"
+    r = urllib.request.Request(BASE + path, data=data, method=method, headers=h)
+    try:
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            return resp.status, resp.headers, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+code, _, _ = tun("GET", "/api/live")
+check("auth: tunnel visitors are blocked before a password exists", code == 401, str(code))
+code, _, _ = tun("GET", "/widgets/system")
+check("auth: widgets not reachable through the tunnel", code == 401, str(code))
+code, _, _ = tun("GET", "/login")
+check("auth: login page reachable through the tunnel", code == 200, str(code))
+st = req("POST", "/api/auth/setup", {"password": "smoke-test-passw0rd"})
+check("auth: password can be set from the home network", st.get("ok") is True)
+code, h, _ = tun("POST", "/api/auth/login", {"password": "wrong-password-1"})
+check("auth: wrong password refused", code == 401, str(code))
+code, h, _ = tun("POST", "/api/auth/login", {"password": "smoke-test-passw0rd"})
+cookie = (h.get("Set-Cookie") or "").split(";")[0]
+check("auth: right password signs in", code == 200 and cookie.startswith("vitals_session="), str(code))
+code, h, _ = tun("GET", "/api/live", cookie=cookie)
+check("auth: signed-in tunnel visitor gets data", code == 200, str(code))
+check("auth: security headers", "script-src 'self'" in (h.get("Content-Security-Policy") or "") and h.get("X-Frame-Options") == "DENY")
+check("auth: home network still needs no login", "cpu" in get("/api/live"))
+
 print("\nNotes:\n  " + "\n  ".join(notes))
 if failures:
     print(f"\n{len(failures)} check(s) failed: {failures}")

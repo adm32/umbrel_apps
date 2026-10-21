@@ -113,6 +113,10 @@ async function call(method, url, body) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty */ }
+  if (res.status === 401 && !url.startsWith('/api/auth/')) {
+    location.href = `/login?next=${encodeURIComponent(location.hash || '')}`;
+    throw new Error('Sign in required');
+  }
   if (!res.ok) throw new Error((data && data.error) || `${res.status} ${res.statusText}`);
   return data;
 }
@@ -200,8 +204,17 @@ export function healthPill(sm) {
 export function appIcon(url, name) {
   const letter = esc((name || '?').trim()[0] || '?');
   if (!url) return `<span class="appicon">${icon('server', 18)}</span>`;
-  return `<span class="appicon"><img src="${esc(url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('b'),{textContent:'${letter}'}))"></span>`;
+  return `<span class="appicon" data-letter="${letter}"><img src="${esc(url)}" alt="" loading="lazy"></span>`;
 }
+// app icons that fail to load fall back to their first letter (no inline handlers: the CSP forbids them)
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (img?.tagName === 'IMG' && img.parentElement?.classList.contains('appicon')) {
+    const b = document.createElement('b');
+    b.textContent = img.parentElement.dataset.letter || '?';
+    img.replaceWith(b);
+  }
+}, true);
 
 export function empty(ic, title, text, action = '') {
   return `<div class="empty">${icon(ic, 34)}<h3>${esc(title)}</h3><p>${text}</p>${action}</div>`;

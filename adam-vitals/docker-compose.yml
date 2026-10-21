@@ -8,7 +8,7 @@ services:
       APP_PORT: 3000
 
   web:
-    image: ghcr.io/adm32/umbrel-vitals:1.1.0
+    image: ghcr.io/adm32/umbrel-vitals:1.2.0
     restart: on-failure
     stop_grace_period: 10s
     # Hardware sensors, power counters (RAPL), S.M.A.R.T. and hot-plugged USB drives need privileged mode.
@@ -24,5 +24,5 @@ services:
     environment:
       UMBREL_ROOT: ${UMBREL_ROOT}
       APP_ID: adam-vitals
-      APP_VERSION: "1.1.0"
+      APP_VERSION: "1.2.0"
       PORT: 3000

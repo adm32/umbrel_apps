@@ -1,4 +1,4 @@
-import { api, bindSeg, esc, icon, info, seg, toast } from '../ui.js';
+import { ago, api, bindSeg, confirmDialog, esc, icon, info, modal, seg, toast } from '../ui.js';
 import { BUILTIN, umbrelAsset, WALLPAPERS } from '../app.js';
 
 export default async function settings(el, app) {
@@ -12,7 +12,10 @@ export default async function settings(el, app) {
   el.innerHTML = `
     <div class="pagehead"><div><h1>Settings</h1><p>Changes save automatically.</p></div></div>
 
-    <div class="section-title" style="margin-top:0">Appearance</div>
+    <div class="section-title" id="security" style="margin-top:0">Security</div>
+    <div class="glass card pad-l" id="sec-box"><div class="skeleton" style="height:120px"></div></div>
+
+    <div class="section-title">Appearance</div>
     <div class="glass card pad-l">
       ${row('Theme', 'White with orange accents by default. "Home" looks like Apple\'s Home app. Auto follows your device.', seg('theme', [['light', 'Light'], ['home', 'Home'], ['dark', 'Dark'], ['auto', 'Auto']], s.theme || 'light'))}
       ${row('Accent colour', 'Warm orange, or the colour umbrelOS pairs with your wallpaper.', seg('accent', [['orange', 'Orange'], ['wallpaper', 'Match wallpaper']], s.accent || 'orange'))}
@@ -92,7 +95,6 @@ export default async function settings(el, app) {
     } catch (err) { toast(err.message, 'error', 6000); }
     b.disabled = false;
   });
-  if (app.sub === 'notify') setTimeout(() => el.querySelector('#notify')?.scrollIntoView({ behavior: 'smooth' }), 100);
 
   // edits made in quick succession are merged into one save (none get lost)
   let timer;
@@ -137,5 +139,84 @@ export default async function settings(el, app) {
     el.querySelectorAll('[data-wp]').forEach((x) => x.classList.toggle('on', x === b));
     save({ wallpaper: b.dataset.wp }, 'Wallpaper changed');
   });
-  return { onRoute(sub) { if (sub === 'notify') el.querySelector('#notify')?.scrollIntoView({ behavior: 'smooth' }); } };
+  // ------------------------------------------------------------ security
+  const box = el.querySelector('#sec-box');
+  const pwFields = (withCurrent) => `${withCurrent ? '<input class="input" type="password" id="pw-cur" placeholder="Current password" autocomplete="current-password" style="width:100%">' : ''}
+    <input class="input" type="password" id="pw-new" placeholder="New password (10+ characters)" autocomplete="new-password" style="width:100%">
+    <input class="input" type="password" id="pw-rep" placeholder="Repeat it" autocomplete="new-password" style="width:100%">`;
+
+  async function loadSecurity() {
+    const sec = await api.get('/api/auth/security');
+    const devices = sec.sessions.map((x) => `<div class="li"><div class="iconwell cell">${icon(/iPhone|Android|Mobile/.test(x.agent) ? 'device-mobile' : 'device-laptop', 18)}</div>
+      <div class="grow"><div class="t">${esc(x.ip)}${x.current ? ' <span class="pill sm good">this device</span>' : ''}</div><div class="d">${esc(browserName(x.agent))} · signed in ${esc(ago(x.created))} · active ${esc(ago(x.last))}</div></div>
+      ${x.current ? '' : `<button class="btn sm ghost" data-end="${x.id}">Sign out</button>`}</div>`).join('');
+    box.innerHTML = `
+      <div class="setrow"><div><div class="t">Password for remote access ${info('Vitals only asks for a password when it is opened through a public domain such as <b>vitals.admcore.hu</b>. On your home network and over Tailscale it opens straight away.')}</div>
+        <div class="d">${sec.configured ? 'Set. Anyone opening Vitals through your domain must sign in.' : '<b style="color:var(--critical-text)">Not set</b> — Vitals refuses all access through your domain until you set one.'}</div></div>
+        <div class="ctl"><button class="btn sm ${sec.configured ? '' : 'primary'}" id="pw-btn">${icon('lock', 15)}${sec.configured ? 'Change password' : 'Set password'}</button></div></div>
+      <div class="setrow"><div><div class="t">Two-factor codes ${info('After your password, Vitals also asks for a 6-digit code from an authenticator app (Apple Passwords, Google Authenticator, 1Password, Authy…). A stolen password alone is then useless.')}</div>
+        <div class="d">${sec.totp ? 'On' : 'Off'}${!sec.configured ? ' — set a password first' : ''}</div></div>
+        <div class="ctl"><button class="btn sm" id="totp-btn" ${sec.configured ? '' : 'disabled'}>${icon('shield-check', 15)}${sec.totp ? 'Turn off' : 'Turn on'}</button></div></div>
+      <div style="padding:14px 2px 0"><div class="row between"><div class="t" style="font-weight:560">Signed-in devices</div>
+        ${sec.sessions.length > 1 ? '<button class="btn sm ghost" id="end-all">Sign out all others</button>' : ''}</div>
+        <div class="list">${devices || '<div class="small muted" style="padding:8px 0">No devices signed in through your domain.</div>'}</div></div>`;
+
+    box.querySelector('#pw-btn').onclick = () => {
+      const m = modal({
+        title: sec.configured ? 'Change password' : 'Set a password', sub: sec.configured ? 'Other signed-in devices will be signed out.' : 'Use something long that you don\'t use anywhere else.',
+        body: `<div class="col" style="gap:10px">${pwFields(sec.configured)}<div class="small" id="pw-msg" style="color:var(--critical-text)"></div></div>`,
+        actions: [{ label: 'Cancel', cls: 'ghost' }, { label: 'Save', cls: 'primary', keepOpen: true, onClick: async ({ close }) => {
+          const q = (id) => m.body.querySelector(id)?.value || '';
+          const msg = m.body.querySelector('#pw-msg');
+          if (q('#pw-new') !== q('#pw-rep')) { msg.textContent = 'The two passwords don\'t match'; return; }
+          try {
+            if (sec.configured) await api.post('/api/auth/password', { current: q('#pw-cur'), password: q('#pw-new') });
+            else await api.post('/api/auth/setup', { password: q('#pw-new') });
+            close();
+            toast('Password saved', 'good');
+            loadSecurity();
+          } catch (err) { msg.textContent = err.message; }
+        } }],
+      });
+    };
+
+    box.querySelector('#totp-btn').onclick = async () => {
+      if (sec.totp) {
+        const m = modal({ title: 'Turn off two-factor codes?', sub: 'Enter your password to confirm.',
+          body: '<input class="input" type="password" id="tf-pw" placeholder="Password" style="width:100%"><div class="small mt" id="tf-msg" style="color:var(--critical-text)"></div>',
+          actions: [{ label: 'Cancel', cls: 'ghost' }, { label: 'Turn off', cls: 'danger', keepOpen: true, onClick: async ({ close }) => {
+            try { await api.post('/api/auth/totp/disable', { password: m.body.querySelector('#tf-pw').value }); close(); toast('Two-factor codes turned off', 'good'); loadSecurity(); } catch (err) { m.body.querySelector('#tf-msg').textContent = err.message; }
+          } }] });
+        return;
+      }
+      const t = await api.get('/api/auth/totp/setup');
+      const m = modal({ title: 'Turn on two-factor codes', sub: 'Scan this with your authenticator app, then type the 6-digit code it shows.',
+        body: `<div style="display:flex;justify-content:center;margin:4px 0 12px"><div style="background:#fff;border-radius:16px;padding:8px;line-height:0">${t.svg}</div></div>
+          <div class="small muted" style="text-align:center">Can't scan? Enter this key: <span class="mono" style="user-select:all">${esc(t.secret.replace(/(.{4})/g, '$1 ').trim())}</span></div>
+          <input class="input mt" id="tf-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:100%;text-align:center;letter-spacing:.3em;font-size:18px;margin-top:14px">
+          <div class="small mt" id="tf-msg" style="color:var(--critical-text)"></div>`,
+        actions: [{ label: 'Cancel', cls: 'ghost' }, { label: 'Turn on', cls: 'primary', keepOpen: true, onClick: async ({ close }) => {
+          try { await api.post('/api/auth/totp/enable', { code: m.body.querySelector('#tf-code').value }); close(); toast('Two-factor codes are on', 'good'); loadSecurity(); } catch (err) { m.body.querySelector('#tf-msg').textContent = err.message; }
+        } }] });
+    };
+
+    box.querySelectorAll('[data-end]').forEach((b) => { b.onclick = async () => { await api.post('/api/auth/sessions/end', { id: b.dataset.end }); loadSecurity(); }; });
+    box.querySelector('#end-all')?.addEventListener('click', async () => {
+      if (await confirmDialog({ title: 'Sign out all other devices?', text: 'They will need the password (and code) again.', confirm: 'Sign out' })) {
+        await api.post('/api/auth/sessions/end', { all: true });
+        loadSecurity();
+      }
+    });
+  }
+  const jump = (sub) => { if (sub === 'notify' || sub === 'security') el.querySelector(`#${sub}`)?.scrollIntoView({ behavior: 'smooth' }); };
+  // jump only once the security box has its real height, or we'd land in the wrong place
+  loadSecurity().catch((e) => { box.innerHTML = `<div class="small muted">${esc(e.message)}</div>`; })
+    .then(() => { if (app.sub === 'security' || app.sub === 'notify') jump(app.sub); });
+  return { onRoute: jump };
+}
+
+function browserName(ua = '') {
+  const b = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${b} on ${os}` : b;
 }

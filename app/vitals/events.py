@@ -22,6 +22,8 @@ KINDS = {
     "speedtest": ("brand-speedtest", "info"),
     "clean": ("brush", "good"),
     "new_device": ("radar-2", "warning"),
+    "login_fail": ("lock", "warning"),
+    "login_new": ("lock-open", "warning"),
     "notify_error": ("bell", "warning"),
 }
 

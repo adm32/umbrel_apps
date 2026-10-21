@@ -195,8 +195,10 @@ function updateChrome(live) {
   badge.classList.toggle('hide', !n);
   badge.classList.toggle('warning', !(live.alerts || []).some((a) => a.level === 'critical'));
   const sys = app.system;
+  const signOut = app.auth && !app.auth.local ? ' · <a href="#" id="signout" class="faint">Sign out</a>' : '';
   $('#sidefoot').innerHTML = `<div><b>${esc(sys.hostname || 'umbrel')}</b>${sys.demo ? ' · <span class="pill sm brand">Demo</span>' : ''}</div>
-    <div>${esc(sys.device || sys.cpuModel || '')}</div><div>Up ${esc(duration(live.uptime, 2))}</div>`;
+    <div>${esc(sys.device || sys.cpuModel || '')}</div><div>Up ${esc(duration(live.uptime, 2))}${signOut}</div>`;
+  $('#signout')?.addEventListener('click', async (e) => { e.preventDefault(); await api.post('/api/auth/logout'); location.href = '/login'; });
 }
 
 let failures = 0;
@@ -231,7 +233,7 @@ async function poll() {
 async function boot() {
   renderShell();
   try {
-    [app.settings, app.system] = await Promise.all([api.get('/api/settings'), api.get('/api/system')]);
+    [app.settings, app.system, app.auth] = await Promise.all([api.get('/api/settings'), api.get('/api/system'), api.get('/api/auth/status')]);
     const h = await api.get('/api/history?range=5m');
     app.hist = (h.points || []).slice(-180);
   } catch (e) {
@@ -266,6 +268,7 @@ const ACTIONS = [
   { t: 'Tap tempo & delay times', ic: 'hand-click', go: 'studio/tools' },
   { t: 'Data usage', ic: 'chart-bar', go: 'network/usage' },
   { t: 'Set up notifications', ic: 'bell', go: 'settings/notify' },
+  { t: 'Password & two-factor', ic: 'lock', go: 'settings/security' },
   { t: 'Switch theme: Light', ic: 'palette', theme: 'light' },
   { t: 'Switch theme: Home', ic: 'home', theme: 'home' },
   { t: 'Switch theme: Dark', ic: 'palette', theme: 'dark' },

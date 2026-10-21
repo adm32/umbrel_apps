@@ -20,6 +20,7 @@ if config.DEMO:
 
 from . import netlab, network, studio as studio_mod, widgets  # noqa: E402
 from .devices import devices, norm_mac, wake  # noqa: E402
+from .auth import COOKIE, auth, check_password, client_ip, is_internal, is_local, totp_match, totp_secret, totp_uri  # noqa: E402
 from .events import events  # noqa: E402
 from .notify import NotifyError, notifier, send as notify_send  # noqa: E402
 from .cleaner import Cleaner  # noqa: E402
@@ -28,7 +29,7 @@ from .processes import ProcessMonitor  # noqa: E402
 from .sampler import Sampler  # noqa: E402
 
 log = logging.getLogger("vitals")
-VERSION = os.environ.get("APP_VERSION", "1.1.0")
+VERSION = os.environ.get("APP_VERSION", "1.2.0")
 
 
 class State:
@@ -420,6 +421,168 @@ async def studio_delete(request: web.Request) -> web.Response:
         return err(str(e))
 
 
+# sign-in (only required when Vitals is reached through a public domain) -----
+
+ALWAYS_LOGIN = os.environ.get("VITALS_ALWAYS_LOGIN") == "1"  # also ask at home (off by default)
+
+
+def _local(request: web.Request) -> bool:
+    return not ALWAYS_LOGIN and is_local(request.headers, request.remote, request.host)
+
+
+def _https(request: web.Request) -> bool:
+    return request.secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https" \
+        or '"https"' in request.headers.get("Cf-Visitor", "")
+
+
+def _signed_in(request: web.Request) -> bool:
+    return auth.check_session(request.cookies.get(COOKIE)) is not None
+
+
+def _start_session(request: web.Request, resp: web.Response, remember: bool) -> web.Response:
+    ip = client_ip(request.headers, request.remote)
+    token = auth.create_session(ip, request.headers.get("User-Agent", ""), remember)
+    resp.set_cookie(COOKIE, token, httponly=True, samesite="Lax", secure=_https(request), path="/",
+                    max_age=30 * 86400 if remember else None)
+    return resp
+
+
+@routes.get("/login")
+async def login_page(request: web.Request) -> web.StreamResponse:
+    if _local(request) or _signed_in(request):
+        raise web.HTTPFound("/")
+    return web.FileResponse(config.WEB_DIR / "login.html", headers={"Cache-Control": "no-store"})
+
+
+@routes.get("/api/auth/status")
+async def auth_status(request: web.Request) -> web.Response:
+    local = _local(request)
+    return ok({"configured": auth.configured, "totp": auth.totp_on, "local": local,
+               "signedIn": _signed_in(request), "required": not local})
+
+
+async def _brake(ip: str) -> None:
+    import asyncio as _a
+    delay = auth.global_delay()
+    if delay:
+        await _a.sleep(delay)
+
+
+@routes.post("/api/auth/login")
+async def auth_login(request: web.Request) -> web.Response:
+    b = await body(request)
+    ip = client_ip(request.headers, request.remote)
+    wait = auth.locked_for(ip)
+    if wait:
+        return err(f"Too many wrong attempts. Try again in {int(wait // 60) + 1} min.", 429)
+    await _brake(ip)
+    if not auth.configured:
+        return err("Remote access isn't set up yet. Set a password in Vitals → Settings → Security from your home network.", 403)
+    loop = asyncio.get_running_loop()
+    good, why = await loop.run_in_executor(None, auth.verify, str(b.get("password", "")), str(b.get("code", "")))
+    if not good:
+        if why == "totp" and not str(b.get("code", "")).strip():
+            return ok({"needCode": True}, 401)  # right password, now ask for the 6-digit code
+        lock = auth.record_failure(ip)
+        msg = "Wrong code" if why == "totp" else "Wrong password"
+        return err(f"{msg}. Locked for {int(lock // 60)} min." if lock else msg, 429 if lock else 401)
+    auth.record_success(ip)
+    return _start_session(request, ok({"ok": True}), bool(b.get("remember")))
+
+
+@routes.post("/api/auth/setup")
+async def auth_setup(request: web.Request) -> web.Response:
+    """Create the password. From outside the home network this needs the one-time setup code."""
+    b = await body(request)
+    ip = client_ip(request.headers, request.remote)
+    if auth.configured and not (_local(request) or _signed_in(request)):
+        return err("A password is already set", 403)
+    if not auth.configured and not _local(request):
+        if auth.locked_for(ip):
+            return err("Too many wrong attempts. Try again later.", 429)
+        import hmac as _hm
+        given = str(b.get("setupCode", "")).strip().upper()
+        if not auth.setup_code() or not _hm.compare_digest(given, auth.setup_code()):
+            auth.record_failure(ip)
+            return err("That setup code isn't right. It's in Files → Apps → adam-vitals → data → SETUP-CODE.txt", 403)
+    if auth.configured:
+        return err("Use Change password in Settings", 400)
+    try:
+        auth.set_password(str(b.get("password", "")))
+    except ValueError as e:
+        return err(str(e))
+    resp = ok({"ok": True})
+    return resp if _local(request) else _start_session(request, resp, True)
+
+
+@routes.post("/api/auth/logout")
+async def auth_logout(request: web.Request) -> web.Response:
+    auth.end_session(request.cookies.get(COOKIE))
+    resp = ok({"ok": True})
+    resp.del_cookie(COOKIE, path="/")
+    return resp
+
+
+@routes.get("/api/auth/security")
+async def auth_security(request: web.Request) -> web.Response:
+    return ok({"configured": auth.configured, "totp": auth.totp_on, "local": _local(request),
+               "sessions": auth.list_sessions(request.cookies.get(COOKIE))})
+
+
+@routes.post("/api/auth/password")
+async def auth_password(request: web.Request) -> web.Response:
+    b = await body(request)
+    if auth.configured:
+        loop = asyncio.get_running_loop()
+        good = await loop.run_in_executor(None, check_password, str(b.get("current", "")), auth.password)
+        if not good:
+            return err("Your current password isn't right")
+    try:
+        auth.set_password(str(b.get("password", "")))
+    except ValueError as e:
+        return err(str(e))
+    ended = auth.end_all(keep=request.cookies.get(COOKIE))
+    return ok({"ok": True, "signedOut": ended})
+
+
+@routes.post("/api/auth/sessions/end")
+async def auth_end_session(request: web.Request) -> web.Response:
+    b = await body(request)
+    if b.get("all"):
+        return ok({"ended": auth.end_all(keep=request.cookies.get(COOKIE))})
+    return ok({"ended": int(auth.end_session_id(str(b.get("id", ""))))})
+
+
+@routes.get("/api/auth/totp/setup")
+async def totp_setup(request: web.Request) -> web.Response:
+    import segno
+    auth.pending_totp = totp_secret()
+    uri = totp_uri(auth.pending_totp, f"Vitals ({request.host.split(':')[0]})")
+    svg = segno.make(uri, error="m").svg_inline(scale=5, dark="#1c1815", light="#ffffff", border=2)
+    return ok({"secret": auth.pending_totp, "uri": uri, "svg": svg})
+
+
+@routes.post("/api/auth/totp/enable")
+async def totp_enable(request: web.Request) -> web.Response:
+    b = await body(request)
+    if not auth.pending_totp or totp_match(auth.pending_totp, str(b.get("code", ""))) is None:
+        return err("That code didn't match — check the time on your phone and try the newest code")
+    auth.totp = {"enabled": True, "secret": auth.pending_totp, "lastStep": -1}
+    auth.pending_totp = None
+    auth.save()
+    return ok({"ok": True})
+
+
+@routes.post("/api/auth/totp/disable")
+async def totp_disable(request: web.Request) -> web.Response:
+    b = await body(request)
+    if not auth.configured or not check_password(str(b.get("password", "")), auth.password):
+        return err("Enter your password to turn off two-factor codes")
+    auth.totp = {}
+    auth.save()
+    return ok({"ok": True})
+
+
 # timeline, notifications, devices, export -----------------------------------
 
 @routes.get("/api/events")
@@ -535,6 +698,49 @@ async def index(request: web.Request) -> web.FileResponse:
     return web.FileResponse(config.WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
+PUBLIC_PATHS = {"/login", "/js/login.js", "/api/auth/status", "/api/auth/login", "/api/auth/setup", "/api/auth/logout"}
+PUBLIC_PREFIXES = ("/css/", "/fonts/", "/img/")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "img-src 'self' data: blob: https: http:; connect-src 'self'; font-src 'self'; "
+                               "object-src 'none'; base-uri 'none'; form-action 'self'",
+}
+
+
+@web.middleware
+async def auth_mw(request: web.Request, handler):
+    """Sign-in is only required when Vitals is reached through a public domain / tunnel."""
+    path = request.path
+    allowed = (_local(request) or path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or _signed_in(request)
+               or (path.startswith("/widgets/") and is_internal(request.headers, request.remote)))
+    if not allowed:
+        if path.startswith(("/api/", "/widgets/")):
+            resp: web.StreamResponse = err("Sign in required", 401)
+        else:
+            resp = web.HTTPFound("/login")
+            _secure(request, resp)
+            raise resp
+    else:
+        resp = await handler(request)
+    _secure(request, resp)
+    return resp
+
+
+def _secure(request: web.Request, resp: web.StreamResponse) -> None:
+    if resp.prepared:
+        return
+    for k, v in SECURITY_HEADERS.items():
+        resp.headers.setdefault(k, v)
+    if _https(request):
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if not _local(request):
+        resp.headers.setdefault("X-Frame-Options", "DENY")  # no clickjacking from the public domain
+
+
 @web.middleware
 async def errors_mw(request: web.Request, handler):
     if request.method in ("POST", "PUT", "DELETE") and request.path.startswith("/api/"):
@@ -558,7 +764,7 @@ async def errors_mw(request: web.Request, handler):
 
 
 def make_app() -> web.Application:
-    app = web.Application(middlewares=[errors_mw], client_max_size=4 * 1024 ** 3)
+    app = web.Application(middlewares=[auth_mw, errors_mw], client_max_size=4 * 1024 ** 3)
     app.add_routes(routes)
     for sub in ("js", "css", "img", "fonts"):
         p = config.WEB_DIR / sub
