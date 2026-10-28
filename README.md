@@ -10,7 +10,7 @@ The system monitor umbrelOS doesn't have, with a liquid-glass design that matche
 - **Activity monitor**: CPU and memory per Umbrel app and per process, searchable and sortable
 - **Cleaner**: finds unused app images, oversized logs, old temp files, leftover data from uninstalled apps, and `.DS_Store`/`._` junk. It only deletes what you tick.
 - **Network Lab** (for studying networking): LAN device scanner with nicknames and Wake-on-LAN, ping, traceroute, DNS lookup and comparison, port check, the services listening on your Umbrel, a subnet calculator with binary view, a subnetting practice quiz and a LAN speed test
-- **Studio** (for music producers): sample-library scanner (formats, sample rates, hours of audio), duplicate-sample finder, DAW backup cleanup, recording-space calculator, tap tempo with a delay/reverb time table, and a note-to-frequency converter
+- **Studio** (for music producers): sample-library scanner (formats, sample rates, hours of audio), duplicate-sample finder, DAW backup cleanup, recording-space calculator, tap tempo with a delay/reverb time table, a note-to-frequency converter, a **bars ↔ time** calculator (BPM + bar number → minutes and seconds, any time signature), and a **YouTube downloader** (MP3 320 kbps with cover art, WAV, or MP4 up to 4K; files land in Home → Downloads → YouTube)
 - **Notifications** to your phone (ntfy, Discord, Telegram or any webhook) when a drive is failing, the CPU overheats, the internet drops, the Umbrel restarts or an unknown device joins your network
 - **Activity timeline**: internet outages (with how long they lasted), restarts, drives plugged in or removed, alerts and cleanups, plus internet uptime for the last 24 hours and 7 days
 - **Search** everything with ⌘K / Ctrl K, and **export** history, speed tests and events as CSV
@@ -84,7 +84,7 @@ Then open <http://localhost:8471>.
 ## Tests
 Every push runs two kinds of tests on GitHub (see the **Actions** tab):
 
-1. **Unit tests** (`app/tests/`, 48 of them): kernel-file and S.M.A.R.T. parsing, outage detection, notifications, device registry, widgets, the API, and the safety rules that stop the cleaner and Studio from ever deleting the wrong file.
+1. **Unit tests** (`app/tests/`, 68 of them): kernel-file and S.M.A.R.T. parsing, outage detection, notifications, device registry, widgets, the API, and the safety rules that stop the cleaner and Studio from ever deleting the wrong file.
 2. **Real-container test** (`.github/smoke_test.py`): builds the Docker image, runs it on a Linux machine with the same permissions it gets on umbrelOS, and checks every feature (sensors, drives, host network, processes, network tools, cleaner, benchmark, widgets).
 
 A new image is only published when both pass. To run the unit tests yourself:

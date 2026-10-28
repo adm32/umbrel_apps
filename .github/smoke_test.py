@@ -2,9 +2,11 @@
 
 The container runs with the same flags as on umbrelOS (privileged, host PID namespace,
 host / at /host, Docker socket), so this exercises the Linux-only code paths:
-/proc and /sys parsing, nsenter into the host network, ss, nmap, docker API, du, benchmark.
+/proc and /sys parsing, nsenter into the host network, ss, nmap, docker API, du, benchmark,
+and the YouTube downloader (yt-dlp + ffmpeg + Deno).
 """
 import json
+import subprocess
 import sys
 import time
 import urllib.error
@@ -137,6 +139,28 @@ try:
     check("CSRF guard rejects non-JSON writes", False)
 except urllib.error.HTTPError as e:
     check("CSRF guard rejects non-JSON writes", e.code == 415)
+
+# ---------------------------------------------------------------- downloader
+yt = get("/api/yt")
+check("downloader: yt-dlp installed", bool(yt["version"]), yt["version"])
+for tool in (["ffmpeg", "-version"], ["deno", "--version"]):
+    out = subprocess.run(["docker", "exec", "vitals-smoke", *tool], capture_output=True, text=True)
+    check(f"downloader: {tool[0]} in the image", out.returncode == 0, out.stdout.splitlines()[0] if out.stdout else out.stderr)
+try:
+    req("POST", "/api/yt/info", {"url": "http://192.168.1.1/"})
+    check("downloader: local-network links refused", False)
+except urllib.error.HTTPError as e:
+    check("downloader: local-network links refused", e.code == 400)
+# YouTube often asks cloud servers for a sign-in check; that's YouTube, not a bug, so it only gets noted
+j = job("/api/yt/download", {"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw", "format": "mp3"}, timeout=300)
+if j["status"] != "done" and "sign-in check" in (j.get("error") or ""):
+    notes.append("YouTube blocked the CI runner, real MP3 download not checked")
+    print("NOTE downloader: YouTube asked the CI runner for a sign-in check; skipped the real download")
+else:
+    check("downloader: real MP3 download (yt-dlp + Deno + ffmpeg)", j["status"] == "done",
+          f"{j['result']['size'] / 1e3:.0f} KB" if j.get("result") else j.get("error") or "")
+    if j.get("result"):
+        req("POST", "/api/yt/delete", {"id": j["result"]["id"]})
 
 # ---------------------------------------------------------------- sign-in through a public domain
 TUN = {"Host": "vitals.example.com", "Cf-Connecting-Ip": "81.2.69.160", "X-Forwarded-For": "81.2.69.160"}

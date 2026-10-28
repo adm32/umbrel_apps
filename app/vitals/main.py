@@ -21,6 +21,7 @@ if config.DEMO:
 from . import netlab, network, studio as studio_mod, widgets  # noqa: E402
 from .devices import devices, norm_mac, wake  # noqa: E402
 from .auth import COOKIE, auth, check_password, client_ip, is_internal, is_local, totp_match, totp_secret, totp_uri  # noqa: E402
+from .downloader import downloader  # noqa: E402
 from .events import events  # noqa: E402
 from .notify import NotifyError, notifier, send as notify_send  # noqa: E402
 from .cleaner import Cleaner  # noqa: E402
@@ -29,7 +30,7 @@ from .processes import ProcessMonitor  # noqa: E402
 from .sampler import Sampler  # noqa: E402
 
 log = logging.getLogger("vitals")
-VERSION = os.environ.get("APP_VERSION", "1.2.0")
+VERSION = os.environ.get("APP_VERSION", "1.3.0")
 
 
 class State:
@@ -41,6 +42,7 @@ class State:
     session: aiohttp.ClientSession
     flush: Any = None
     last_lan_scan: float = 0.0
+    last_yt_check: float = 0.0
 
 
 S = State()
@@ -117,6 +119,17 @@ async def slow_loop(app: web.Application) -> None:
         if time.monotonic() - last_smart > 1800:
             last_smart = time.monotonic()
             asyncio.ensure_future(S.sampler.refresh_smart())
+        marker = config.DATA / "pylib" / ".updated"
+        stale = not marker.exists() or time.time() - marker.stat().st_mtime > 7 * 86400
+        if stale and not jobs.running("ytupdate") and not downloader.updating and time.time() - S.last_yt_check > 6 * 3600:
+            S.last_yt_check = time.time()  # YouTube changes often: keep yt-dlp fresh, at most weekly
+
+            async def bg_update(job):
+                v = await downloader.update()
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+                return {"version": v}
+            jobs.start("ytupdate", bg_update)
         mins = settings.get()["lan_scan_minutes"]
         if mins and not jobs.running("lanscan") and time.time() - S.last_lan_scan > mins * 60:
             S.last_lan_scan = time.time()
@@ -141,6 +154,7 @@ async def on_startup(app: web.Application) -> None:
     S.studio = studio_mod.Studio()
     S.flush = None
     S.last_lan_scan = time.time() - 60 * 60 * 24 + 120  # first background scan ~2 min after start
+    S.last_yt_check = time.time() - 6 * 3600 + 300      # first yt-dlp freshness check ~5 min after start
     events.listeners.append(notifier.on_event)
     await S.sampler.sample()
     app[TASKS] = [asyncio.ensure_future(sampler_loop(app)), asyncio.ensure_future(slow_loop(app))]
@@ -667,6 +681,72 @@ async def export(request: web.Request) -> web.Response:
         return _csv("vitals-events.csv", ["time", "kind", "level", "text"],
                     [[_iso(e["at"]), e["kind"], e["level"], e["text"]] for e in reversed(events.recent(1000))])
     return err("Unknown export", 404)
+
+
+# downloader (YouTube & co. -> MP3 / WAV / MP4) -------------------------------
+
+@routes.get("/api/yt")
+async def yt_state(request: web.Request) -> web.Response:
+    running = [j.to_dict() for j in jobs._jobs.values() if j.kind == "ytdl" and j.status == "running"]
+    return ok({"items": downloader.items(), "folder": downloader_display(), "version": await downloader.version(),
+               "updating": downloader.updating, "running": running})
+
+
+def downloader_display() -> str:
+    from .downloader import display_dir
+    return display_dir()
+
+
+@routes.post("/api/yt/info")
+async def yt_info(request: web.Request) -> web.Response:
+    b = await body(request)
+    try:
+        return ok(await downloader.info(str(b.get("url", ""))))
+    except ValueError as e:
+        return err(str(e))
+    except RuntimeError as e:
+        return err(str(e), 422)
+
+
+@routes.post("/api/yt/download")
+async def yt_download(request: web.Request) -> web.Response:
+    b = await body(request)
+    from .downloader import check_url
+    url, fmt, quality = str(b.get("url", "")), str(b.get("format", "mp3")), str(b.get("quality", "1080"))
+    try:
+        check_url(url)
+        if fmt not in ("mp3", "wav", "mp4"):
+            raise ValueError("Pick MP3, WAV or MP4")
+    except ValueError as e:
+        return err(str(e))
+    return start_job("ytdl", lambda job: downloader.download(job, url, fmt, quality), single=False)
+
+
+@routes.get("/api/yt/file/{id}")
+async def yt_file(request: web.Request) -> web.StreamResponse:
+    from urllib.parse import quote
+    p = downloader.safe_path(request.match_info["id"])
+    if not p:
+        return err("That file is gone", 404)
+    name = os.path.basename(p)
+    return web.FileResponse(p, headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                                        "Cache-Control": "no-store"})
+
+
+@routes.post("/api/yt/delete")
+async def yt_delete(request: web.Request) -> web.Response:
+    b = await body(request)
+    return ok({"deleted": downloader.delete(str(b.get("id", "")))})
+
+
+@routes.post("/api/yt/update")
+async def yt_update(request: web.Request) -> web.Response:
+    async def run_update(job):
+        job.phase = "Downloading the newest yt-dlp"
+        v = await downloader.update()
+        (config.DATA / "pylib" / ".updated").touch()
+        return {"version": v}
+    return start_job("ytupdate", run_update)
 
 
 # widgets (fetched by umbreld, not through the app proxy) ---------------------

@@ -120,11 +120,12 @@ async def run(cmd: List[str], timeout: float = 30.0) -> Tuple[int, str, str]:
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
-async def stream(cmd: List[str], on_line: Callable[[str], None], job: "Job", timeout: float = 120.0) -> int:
+async def stream(cmd: List[str], on_line: Callable[[str], None], job: "Job", timeout: float = 120.0,
+                 env: Optional[Dict[str, str]] = None) -> int:
     """Run a command and hand each output line to on_line as it arrives."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env
         )
     except (FileNotFoundError, PermissionError) as e:
         on_line(f"error: {e}")

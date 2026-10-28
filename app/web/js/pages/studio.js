@@ -1,3 +1,5 @@
+import { mount as mountBars } from './studio-bars.js';
+import { mount as mountDownloads } from './studio-download.js';
 import { $, ago, api, bar, bindSeg, bytes, bytesHTML, confirmDialog, empty, esc, icon, info, runJob, seg, setHTML, store, toast } from '../ui.js';
 
 const NOTES = [['1/1', 4], ['1/2', 2], ['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125], ['1/64', 0.0625]];
@@ -9,10 +11,11 @@ export default async function studio(el, app) {
   let cwd = store.get('studio-path', '');
   const del = new Set();
 
-  let tab = app.sub === 'tools' ? 'tools' : 'library';
+  const TABS = ['library', 'download', 'tools'];
+  let tab = TABS.includes(app.sub) ? app.sub : 'library';
   el.innerHTML = `
-    <div class="pagehead"><div><h1>Studio</h1><p>Your sample library, plus calculators for sessions.</p></div>
-      <div class="actions">${seg('stab', [['library', 'Library'], ['tools', 'Tools']], tab)}</div></div>
+    <div class="pagehead"><div><h1>Studio</h1><p>Your sample library, a downloader and calculators for sessions.</p></div>
+      <div class="actions">${seg('stab', [['library', 'Library'], ['download', 'Downloader'], ['tools', 'Tools']], tab)}</div></div>
     <section data-stab="library">
       <div class="glass card pad-l">
         <div class="cardhead"><div class="cardtitle">${icon('folder-open', 17)}Scan a folder ${info('Finds duplicate samples, automatic DAW backup files and your projects, and shows what your library is made of. Nothing is deleted unless you select it.')}</div></div>
@@ -23,7 +26,9 @@ export default async function studio(el, app) {
       </div>
       <div id="sd-results"></div>
     </section>
+    <section data-stab="download"><div id="dl-root"></div></section>
     <section data-stab="tools">
+      <div id="bars-root" style="margin-bottom:16px"></div>
       <div class="grid g-main">
       <div class="glass card pad-l">
         <div class="cardhead"><div class="cardtitle">${icon('hand-click', 17)}Tempo & delay times</div></div>
@@ -61,6 +66,8 @@ export default async function studio(el, app) {
   };
   bindSeg(el, 'stab', showTab);
   showTab(tab);
+  mountBars($('#bars-root', el));
+  const downloads = mountDownloads($('#dl-root', el));
 
   // ---------------------------------------------------------------- folder browser
   async function browse(path) {
@@ -248,7 +255,7 @@ export default async function studio(el, app) {
   noteFreq();
   renderResults();
   return {
-    onRoute(sub) { if (sub === 'tools' || sub === 'library') { el.querySelectorAll('[data-seg="stab"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === sub)); showTab(sub); } },
-    destroy() { document.removeEventListener('keydown', onKey); },
+    onRoute(sub) { if (TABS.includes(sub)) { el.querySelectorAll('[data-seg="stab"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === sub)); showTab(sub); } },
+    destroy() { document.removeEventListener('keydown', onKey); downloads.destroy(); },
   };
 }

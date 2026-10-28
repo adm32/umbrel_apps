@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Vitals
-version: "1.2.0"
+version: "1.3.0"
 tagline: Temperatures, power, drive health, network speed and a disk cleaner
 icon: https://raw.githubusercontent.com/adm32/umbrel_apps/main/adam-vitals/icon.svg
 description: >-
@@ -15,7 +15,7 @@ description: >-
 
   It also includes a disk cleaner for leftovers (old app images, oversized logs, temp files, Mac/Windows junk files),
   a Network Lab (device scanner, ping, traceroute, DNS, port checker, subnet calculator and a subnetting quiz)
-  and Studio tools for music producers (sample-library scanner, duplicate samples, DAW backup cleanup, tempo and recording calculators).
+  and Studio tools for music producers (sample-library scanner, duplicate samples, DAW backup cleanup, tempo, bars-to-time and recording calculators) plus a YouTube to MP3 / WAV / MP4 downloader.
 
 
   Add up to eight different Vitals widgets to your home screen.
@@ -24,18 +24,14 @@ description: >-
   Note: to read hardware sensors, drive health and every app's activity, Vitals runs with full access to your
   Umbrel (privileged mode, host process list and the Docker socket). Only install it from a source you trust.
 releaseNotes: >-
-  Safe remote access for using Vitals on your own domain.
+  New in Studio: a downloader and a bars-to-time calculator.
 
 
-  - When Vitals is opened through a public domain (for example via Cloudflare Tunnel) it asks for a password. At home and over Tailscale it opens straight away, like before.
+  - Download from YouTube, YouTube Music, SoundCloud and more as MP3 (320 kbps with cover art), WAV or MP4 video. Files go to Home → Downloads → YouTube
 
-  - Optional two-factor codes from an authenticator app
+  - Bars ↔ time: type the BPM and a bar number to see exactly where it lands in minutes and seconds, or type a time to see which bar it is. Supports 3/4, 6/8 and other time signatures, plus section markers every 4–32 bars
 
-  - Wrong passwords lock the visitor out for longer each time, and you get a notification
-
-  - See signed-in devices and sign them out from Settings → Security
-
-  - Stricter browser security headers
+  - The downloader updates itself weekly, and has an “Update downloader” button for when YouTube changes something
 
 developer: Adam
 website: https://github.com/adm32/umbrel_apps

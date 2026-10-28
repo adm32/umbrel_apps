@@ -25,6 +25,7 @@ KINDS = {
     "login_fail": ("lock", "warning"),
     "login_new": ("lock-open", "warning"),
     "notify_error": ("bell", "warning"),
+    "download": ("cloud-download", "good"),
 }
 
 

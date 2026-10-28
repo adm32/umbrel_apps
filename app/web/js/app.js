@@ -266,6 +266,8 @@ const ACTIONS = [
   { t: 'Drive health', ic: 'stethoscope', go: 'storage' },
   { t: 'Scan my sample library', ic: 'music', go: 'studio/library' },
   { t: 'Tap tempo & delay times', ic: 'hand-click', go: 'studio/tools' },
+  { t: 'Bars to time (BPM calculator)', ic: 'clock', go: 'studio/tools' },
+  { t: 'Download from YouTube (MP3 / MP4)', ic: 'cloud-download', go: 'studio/download' },
   { t: 'Data usage', ic: 'chart-bar', go: 'network/usage' },
   { t: 'Set up notifications', ic: 'bell', go: 'settings/notify' },
   { t: 'Password & two-factor', ic: 'lock', go: 'settings/security' },

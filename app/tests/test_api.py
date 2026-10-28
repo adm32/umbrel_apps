@@ -19,7 +19,7 @@ class Api(unittest.TestCase):
 
             for url in ("/", "/api/live", "/api/system", "/api/history?range=24h", "/api/storage", "/api/network",
                         "/api/processes", "/api/settings", "/api/cleaner", "/api/studio", "/api/events",
-                        "/api/devices", "/api/studio/browse", "/css/app.css", "/js/app.js"):
+                        "/api/devices", "/api/studio/browse", "/api/yt", "/css/app.css", "/js/app.js"):
                 r = await c.get(url)
                 self.assertEqual(r.status, 200, url)
 
@@ -50,6 +50,13 @@ class Api(unittest.TestCase):
                                   ("portscan", {"host": "a b"}), ("wol", {"mac": "nope"})):
                 r = await c.post(f"/api/tools/{tool}", json=payload)
                 self.assertEqual(r.status, 400, tool)
+
+            # downloader: only web links, only its own files, JSON-only writes
+            self.assertEqual((await c.post("/api/yt/info", json={"url": "http://127.0.0.1:3000/"})).status, 400)
+            self.assertEqual((await c.post("/api/yt/download", json={"url": "file:///etc/passwd", "format": "mp3"})).status, 400)
+            self.assertEqual((await c.get("/api/yt/file/nope")).status, 404)
+            self.assertEqual((await c.post("/api/yt/delete", data="id=x",
+                                           headers={"Content-Type": "application/x-www-form-urlencoded"})).status, 415)
 
             # devices
             r = await c.put("/api/devices/AA:BB:CC:DD:EE:01", json={"nickname": "Studio Mac"})
